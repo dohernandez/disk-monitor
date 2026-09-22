@@ -75,9 +75,11 @@ Free space defaults to **every 30 seconds**; folder scans default to **every 5 m
 Saved preferences take precedence. Scans run in the background, one at a time; a
 busy automatic tick is skipped. Click outside or press Escape to dismiss the popup.
 
-Default folders include `~/Documents/YeagerAI`, Library caches, Go modules, Cargo,
-Rust toolchains, Anvil scratch, Claude history, and Docker VM storage. The project
-root is currently specific to that layout; use **Add folder** for your own roots.
+Default cache folders are included only when present on this Mac (or previously
+measured): Library caches, Go modules, Cargo, Rust toolchains, Anvil scratch, Claude
+history and Docker VM storage. Use **Choose Projects folder** for your project root,
+and **Add folder** for others. Right-click any tracked root to **Stop tracking**.
+Existing saved Projects measurements remain tracked when upgrading.
 See the [usage guide](docs/USAGE.md) for exact paths and scan behavior.
 
 <details>
