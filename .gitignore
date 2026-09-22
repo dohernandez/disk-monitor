@@ -1,0 +1,10 @@
+build/
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+*.pre-diagnostics
+*.sqlite*
+*.db*
+.env
+.env.*
