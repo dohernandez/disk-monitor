@@ -1,0 +1,171 @@
+name: macOS build and release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Superseded PR checks can stop. Each main commit keeps its own release run.
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  policy:
+    name: Commit signatures
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Require GitHub-verified commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" --jq '.[].commit.verification.verified' > "$RUNNER_TEMP/verified.txt"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.verification.verified' > "$RUNNER_TEMP/verified.txt"
+          fi
+          python3 - <<'PYVERIFY'
+          import os
+          from pathlib import Path
+          values = (Path(os.environ['RUNNER_TEMP']) / 'verified.txt').read_text().splitlines()
+          assert values and all(value == 'true' for value in values), 'Every new commit must have a verified signature'
+          print('PASS: all new commits have GitHub-verified signatures')
+          PYVERIFY
+
+  build:
+    name: Test and build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate release logic
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: Build app
+        env:
+          BUILD_DIR: ${{ runner.temp }}/build
+          APP_BUILD: ${{ github.run_number }}
+        run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          sh build.sh
+      - name: Check packaged app
+        run: python3 scripts/check_app.py "$RUNNER_TEMP/build/Disk Monitor.app"
+
+      - name: Verify PR installer
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/package.py --app "$RUNNER_TEMP/build/Disk Monitor.app" --version "$(cat VERSION)" --output "$RUNNER_TEMP/pr-installer"
+      - name: Archive tested app
+        run: ditto -c -k --keepParent "$RUNNER_TEMP/build/Disk Monitor.app" "$RUNNER_TEMP/app.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-${{ matrix.arch }}
+          path: ${{ runner.temp }}/app.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  version:
+    name: Reserve release version
+    needs: [build, policy]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Read merged PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" > "$RUNNER_TEMP/pulls.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          pulls = json.loads((Path(os.environ['RUNNER_TEMP']) / 'pulls.json').read_text())
+          branches = [p['head']['ref'] for p in pulls if p.get('merged_at') and p.get('merge_commit_sha') == os.environ['GITHUB_SHA']]
+          branch = branches[0] if branches else 'patch/direct-push'
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('RELEASE_BRANCH=' + branch + '\n')
+          PY
+      - name: Reserve or reuse tested commit tag
+        id: version
+        run: python3 scripts/release_version.py
+
+  package:
+    name: Release installers
+    needs: [build, version]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: app-${{ matrix.arch }}
+          path: ${{ runner.temp }}/download
+      - name: Unpack tested app
+        run: ditto -x -k "$RUNNER_TEMP/download/app.zip" "$RUNNER_TEMP/unpacked"
+      - name: Create and verify installer
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          APP_BUILD: ${{ github.run_number }}
+        run: python3 scripts/package.py --app "$RUNNER_TEMP/unpacked/Disk Monitor.app" --version "$RELEASE_VERSION" --build "$APP_BUILD"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installer-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish complete release
+    needs: [version, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: dist
+      - name: Publish installers and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: python3 scripts/publish_release.py

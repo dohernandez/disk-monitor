@@ -1,7 +1,7 @@
 # Architecture and data
 
-Baseline: accepted draft 01, 2026-09-18. All runtime code is in
-[`main.swift`](../main.swift); packaging is in [`build.sh`](../build.sh).
+Stable baseline: version 1.0.0, 2026-09-22. All runtime code is in
+[`main.swift`](../main.swift); packaging is in [`build.sh`](.sh build.sh).
 Use symbol names below to navigate, since line numbers change.
 
 ## Source map
@@ -72,7 +72,7 @@ When applying results:
 
 `refreshCapacity` calls FileManager's filesystem attributes for the home directory.
 It does not run `du` or shell `df`. Failure sets capacity to zero and produces an alert;
-the previous free number may remain in the header (a known draft limitation).
+the previous free number may remain in the header (a known limitation).
 
 ## Timers and rankings
 
@@ -114,7 +114,7 @@ behavior as a safe migration strategy. Preserve a backup before changing the for
 
 ## Known boundaries and follow-ups
 
-These are documented limitations, not authorization to change the accepted draft:
+These are documented limitations, not authorization to change the accepted behavior:
 
 - No pruning of stale readings for deleted paths or stopped-tracking roots. Old
   readings may remain in rankings or growth alerts. Growth has only one previous value.
@@ -130,10 +130,9 @@ These are documented limitations, not authorization to change the accepted draft
 - Protected-folder access can fail. There is no Full Disk Access onboarding flow.
 - Top-five, save-failure, popup events, and visual contrast
   lack dedicated automated coverage. Self-tests do not constitute full UI validation.
-- Bundle metadata says macOS 13, but swiftc has no explicit deployment target and
-  two-argument SwiftUI `onChange` uses newer APIs. Initial build used Swift 6.0.2,
-  SDK 15.1 and arm64 macOS 15 default target. No older-system or Intel claim is made.
-- There is no installer, auto-update, launch-at-login, notarization, or multi-volume UI.
+- Version 1.0.0 sets both bundle metadata and the Swift deployment target to macOS 15.
+  Native arm64 and x86_64 builds are validated separately by CI.
+- CI packages DMGs; there is no auto-update, launch-at-login, notarization, or multi-volume UI.
 
 Partial scan attribution: stderr is parsed under LC_ALL=C. A path-specific du error affects only that path, its ancestors, and descendants; unaffected sibling results are complete. Unrecognized diagnostics conservatively mark the whole scan partial. Complete saved measurements still survive an affected rescan; fresh complete results repair old partial labels without a growth delta. Optional Reading.scanError persists the diagnostic for partial readings (legacy JSON decodes without it). Hover “Partial · scan error” for the cause, or inspect the tracked-root alert. Previously saved partial flags remain until remeasurement; no flags are blindly cleared. Self-tests cover sibling isolation, prefix neighbors, colon paths, global fallback, merge protection and legacy/roundtrip persistence.
 

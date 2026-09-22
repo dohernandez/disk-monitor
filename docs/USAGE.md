@@ -92,7 +92,7 @@ Readings and added roots live in
 The popup intentionally uses a soft charcoal theme. Its drive icon follows the native
 menu bar tint, with a separate colored warning badge.
 
-Known draft gaps include stale cached paths, limited scan-error persistence, and no
+Known limitations include stale cached paths, limited scan-error persistence, and no
 schema migration or backup system. The bundle declares macOS 13, but the build does
 not explicitly target it and the UI uses newer APIs. Do not claim macOS 13 support.
 See [Architecture](ARCHITECTURE.md) for details.

@@ -8,7 +8,7 @@ building or restarting the app.
 
 ```sh
 sh -n build.sh
-./build.sh > build.log 2>&1
+sh build.sh > build.log 2>&1
 "build/Disk Monitor.app/Contents/MacOS/DiskMonitor" --self-test
 codesign --verify --deep --strict "build/Disk Monitor.app"
 ```
@@ -98,7 +98,7 @@ If a new build regresses, quit it and launch the preserved bundle by its exact p
 Restore the matching source/build script before further development. If a new version
 changed storage, use its documented reverse migration or restore the explicitly saved
 pre-upgrade state while the app is stopped; restoring a backup loses measurements
-made afterward. There is no automated rollback or migration in this draft.
+made afterward. There is no automated rollback or migration in this version.
 
 ## Troubleshooting
 
@@ -111,7 +111,7 @@ made afterward. There is no automated rollback or migration in this draft.
 | Deep child has no size or an old size | Ancestor scan only emits depth 2; scan the child or track it separately |
 | Expanding appears stuck | Directory loading is separate from `du`; check loading/error state, preserve collapse semantics |
 | Preferences appear lost | Verify bundle ID, defaults keys, launch identity, and decode errors before touching data |
-| Blank/stale top-five entry | Check cached paths and candidate rules; draft does not prune stale readings |
+| Blank/stale top-five entry | Check cached paths and candidate rules; the app does not prune stale readings |
 | New UI did not appear | Verify the process was actually quit and the intended bundle launched |
 | SwiftBridging redefinition | Inspect build log and local overlay, not system toolchain files |
 
