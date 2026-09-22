@@ -79,3 +79,10 @@ restricted to the main-only release environment. Preserve 0700/0600 cache privac
 and reject links before changing private-state permissions. Archive extraction must
 not write through symbolic links. Run the focused privacy/archive tests plus real
 Sparkle tamper-rejection checks after changes in these paths.
+
+Permission-only scans: confirmed `du` permission denials show “Protected by macOS”
+(or “Partial · protected contents” when a lower-bound size is available). They do
+not trigger the menu-bar ? badge. Mixed, unknown and other scan failures still warn;
+free-space and growth thresholds are unchanged. Classification uses all diagnostics
+before display truncation. Legacy partial readings require a fresh scan before
+suppressing their warning. No filesystem permissions are changed.

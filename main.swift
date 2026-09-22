@@ -76,7 +76,7 @@ func intervalText(_ seconds: Int) -> String { seconds % 60 == 0 ? "\(seconds / 6
 func sizeText(_ bytes: Int64) -> String {
     let f = ByteCountFormatter(); f.countStyle = .binary; f.allowedUnits = [.useGB, .useMB, .useKB]; return f.string(fromByteCount: bytes)
 }
-struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil }
+struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil }
 struct Root: Codable, Identifiable { var path: String; var title: String; var id: String { path } }
 struct Saved: Codable { var readings: [String: Reading]; var extras: [Root] }
 struct DiskAlert: Identifiable {
@@ -99,10 +99,18 @@ func diskSpaceAlert(free: Int64, capacity: Int64) -> DiskAlert? {
     return DiskAlert(id: "space", critical: free < 125 * gib, title: free < 125 * gib ? "Critically low disk space" : "Disk space running low", detail: "\(sizeText(free)) free · warning below 300 GiB, critical below 125 GiB.", path: nil)
 }
 enum FolderScanState { case idle, scanning, queued }
+func isPermissionDiagnostic(_ text: String) -> Bool {
+    text.hasPrefix("du: /") && (text.hasSuffix(": Operation not permitted") || text.hasSuffix(": Permission denied"))
+}
 struct ScanResult {
     var values: [String: Int64]; var error: String?
     var failures: [String:String] = [:]
     var unlocalized = true
+    func protectedOnly(for path: String) -> Bool {
+        guard error != nil, !unlocalized else { return false }
+        let affected = failures.filter { $0.key == path || $0.key.hasPrefix(path + "/") || path.hasPrefix($0.key + "/") }.map(\.value)
+        return !affected.isEmpty && affected.allSatisfy { $0.split(separator: "\n").allSatisfy { isPermissionDiagnostic(String($0)) } }
+    }
     func error(for path:String)->String? {
         guard let error=error else {return nil}
         if unlocalized {return error}
@@ -116,13 +124,13 @@ func scopedScanResult(values:[String:Int64],root:String,detail:String)->ScanResu
         guard text.hasPrefix("du: "),let delimiter=text.range(of:": ",options:.backwards),delimiter.lowerBound>=text.index(text.startIndex,offsetBy:4) else {unknown=true;continue}
         let path=String(text[text.index(text.startIndex,offsetBy:4)..<delimiter.lowerBound])
         guard path==root || path.hasPrefix(root+"/") else {unknown=true;continue}
-        failures[path]=String(text.prefix(600))
+        failures[path] = [failures[path], text].compactMap { $0 }.joined(separator: "\n")
     }
     return ScanResult(values:values,error:detail.isEmpty ? "Scan failed without diagnostic details" : String(detail.prefix(600)),failures:failures,unlocalized:unknown || failures.isEmpty)
 }
-func mergedReading(old:Reading?,bytes:Int64,error:String?,date:Date)->Reading {
+func mergedReading(old:Reading?,bytes:Int64,error:String?,date:Date,protectedOnly:Bool = false)->Reading {
     if error != nil,let old=old,old.incomplete != true {return old}
-    return Reading(bytes:bytes,previous:error==nil && old?.incomplete != true ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error)
+    return Reading(bytes:bytes,previous:error==nil && old?.incomplete != true ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error,protectedOnly:error != nil && protectedOnly)
 }
 final class Scanner {
     private let lock = NSLock()
@@ -246,10 +254,16 @@ final class Model: ObservableObject {
         if queuedPaths.contains(where: overlaps) { return .queued }
         return .idle
     }
+    @Published var protectedPaths: Set<String> = []
+    func isProtected(_ path: String) -> Bool {
+        if errors[path] != nil { return protectedPaths.contains(path) }
+        return readings[path]?.protectedOnly == true
+    }
     func measurementLabel(_ path: String) -> String {
         if !FileManager.default.fileExists(atPath: path) { return "Not found" }
         if let active = activePath, path == active || path.hasPrefix(active + "/") { return "Scanning…" }
         if queuedPaths.contains(path) { return "Queued…" }
+        if isProtected(path) { return "Protected by macOS" }
         return errors[path] == nil ? "Not scanned" : "Unreadable"
     }
     func refreshCapacity() {
@@ -264,7 +278,7 @@ final class Model: ObservableObject {
         let roots = [project] + caches + extras
         for root in roots {
             let error = errors[root.path]
-            if (error != nil && error != "Cancelled") || readings[root.path]?.incomplete == true {
+            if !isProtected(root.path) && ((error != nil && error != "Cancelled") || readings[root.path]?.incomplete == true) {
                 result.append(DiskAlert(id: "scan:" + root.path, critical: false, title: "Incomplete scan · " + root.title, detail: error ?? readings[root.path]?.scanError ?? "Some contents could not be measured. Rescan the folder for specific error details.", path: root.path, measurementIssue: true))
             }
         }
@@ -366,12 +380,20 @@ final class Model: ObservableObject {
                 DispatchQueue.main.async { self.activePath = root.path; self.queuedPaths.remove(root.path); self.status = "Scanning \(root.title) · \(i + 1)/\(existing.count)" }
                 let result = self.scanner.scan(root.path)
                 DispatchQueue.main.sync {
+                    if result.error == "Cancelled" { return }
+                    let affectedPaths = Set(result.values.keys).union(result.failures.keys).union([root.path])
+                    self.protectedPaths = self.protectedPaths.filter { $0 != root.path && !$0.hasPrefix(root.path + "/") }
+                    for path in affectedPaths {
+                        if result.protectedOnly(for: path) { self.protectedPaths.insert(path) }
+                        if let error = result.error(for: path) { self.errors[path] = error }
+                        else { self.errors.removeValue(forKey: path) }
+                    }
                     if let error = result.error { self.errors[root.path] = error }
                     else { self.errors.removeValue(forKey: root.path) }
                     for (path, bytes) in result.values {
                         let pathError=result.error(for:path)
                         if let pathError=pathError {self.errors[path]=pathError} else {self.errors.removeValue(forKey:path)}
-                        self.readings[path]=mergedReading(old:self.readings[path],bytes:bytes,error:pathError,date:Date())
+                        self.readings[path]=mergedReading(old:self.readings[path],bytes:bytes,error:pathError,date:Date(),protectedOnly:result.protectedOnly(for:path))
                     }
                     if !result.values.isEmpty { self.lastMeasuredAt = Date() }
                     let cachedPaths = self.childCache.keys.filter { $0 == root.path || $0.hasPrefix(root.path + "/") }
@@ -426,14 +448,14 @@ struct FolderRow: View {
                 Image(systemName: depth == 0 ? "folder.fill" : "folder").foregroundStyle(depth == 0 ? Palette.accent : Palette.secondary)
                 Text(root.title).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 4)
-                if model.errors[root.path] != nil { Image(systemName: "exclamationmark.circle").foregroundStyle(Palette.warning).help(model.errors[root.path]!) }
+                if model.errors[root.path] != nil { Image(systemName: model.isProtected(root.path) ? "lock" : "exclamationmark.circle").foregroundStyle(model.isProtected(root.path) ? Palette.secondary : Palette.warning).help(model.errors[root.path]!) }
                 if let r = model.readings[root.path] {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text((r.incomplete == true ? "≥ " : "") + sizeText(r.bytes)).fontWeight(.medium).monospacedDigit()
                         if model.scanState(root.path) != .idle {
                             Text(model.scanState(root.path) == .scanning ? "Scanning…" : "Queued…").font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.accent)
                         }
-                        if r.incomplete == true { Text("Partial · scan error").font(.system(size: 10)).foregroundStyle(Palette.warning).help(r.scanError ?? model.errors[root.path] ?? "Older partial reading. Rescan this folder for the specific error.") }
+                        if r.incomplete == true { Text(model.isProtected(root.path) ? "Partial · protected contents" : "Partial · scan error").font(.system(size: 10)).foregroundStyle(Palette.warning).help(r.scanError ?? model.errors[root.path] ?? "Older partial reading. Rescan this folder for the specific error.") }
                         if let old = r.previous {
                             let delta = r.bytes - old
                             Text(delta == 0 ? "No change" : "\(delta > 0 ? "+" : "−")\(sizeText(abs(delta)))").font(.system(size: 10)).foregroundStyle(delta >= 10 * gib ? Palette.warning : Palette.secondary)
@@ -593,7 +615,7 @@ struct RefreshSettings: View {
                 }
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "questionmark.circle.fill").foregroundStyle(Palette.uncertainty).frame(width: 18)
-                    Text("Yellow ? · Incomplete or failed folder measurement, or unavailable free-space reading.")
+                    Text("Yellow ? · Unexpected incomplete or failed measurement, or unavailable free-space reading. Protected folders alone do not trigger a badge.")
                 }
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "internaldrive").foregroundStyle(Palette.secondary).frame(width: 18)
@@ -843,6 +865,13 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(scopedScanResult(values:[:],root:"/fixture",detail:"du: unknown failure").error(for:"/fixture/good") != nil)
     let colon=scopedScanResult(values:[:],root:"/fixture",detail:"du: /fixture/name: with colon: Operation not permitted")
     precondition(colon.error(for:"/fixture/name: with colon") != nil && colon.error(for:"/fixture/good")==nil)
+    let protectedResult = scopedScanResult(values: [:], root: "/fixture", detail: "du: /fixture/private: Operation not permitted\ndu: /fixture/other: Permission denied")
+    precondition(protectedResult.protectedOnly(for: "/fixture"))
+    precondition(!protectedResult.protectedOnly(for: "/fixture/good"))
+    precondition(!scoped.protectedOnly(for: "/fixture"), "Mixed failures must keep warning")
+    let repeated = scopedScanResult(values: [:], root: "/fixture", detail: "du: /fixture/private: Input/output error\ndu: /fixture/private: Permission denied")
+    precondition(!repeated.protectedOnly(for: "/fixture"), "A later denial must not hide an earlier failure")
+    precondition(!scopedScanResult(values: [:], root: "/fixture", detail: "unknown\ndu: /fixture/private: Permission denied").protectedOnly(for: "/fixture"))
     let complete=Reading(bytes:50,previous:40,date:Date())
     precondition(mergedReading(old:complete,bytes:20,error:"denied",date:Date()).bytes==50)
     let partial=mergedReading(old:nil,bytes:20,error:"denied",date:Date())
@@ -884,6 +913,18 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.alerts.filter { $0.id.hasPrefix("growth:") }.count == 1, "Parent and child growth must not duplicate alerts")
     model.readings = [model.project.path: Reading(bytes: 30 * gib, previous: nil, date: Date(), incomplete: true)]
     precondition(model.alerts.count == 1 && model.alerts[0].id.hasPrefix("scan:"))
+    let protectedReading = mergedReading(old: nil, bytes: 10, error: "du: /fixture/private: Permission denied", date: Date(), protectedOnly: true)
+    let savedProtected = try JSONDecoder().decode(Reading.self, from: JSONEncoder().encode(protectedReading))
+    model.readings = [model.project.path: savedProtected]
+    precondition(model.alerts.isEmpty && savedProtected.incomplete == true && savedProtected.previous == nil)
+    model.errors[model.project.path] = "Input/output error"
+    precondition(model.alerts.count == 1, "Fresh unexpected error overrides saved protection")
+    model.protectedPaths.insert(model.project.path)
+    precondition(model.alerts.isEmpty)
+    model.free = 200 * gib
+    precondition(diskBadgeLevel(model.alerts) == 2, "Protected contents must not hide low space")
+    model.free = 400 * gib
+    model.protectedPaths = []
     model.readings = [:]; model.errors = [model.project.path: "Cancelled"]
     precondition(model.alerts.isEmpty, "User cancellation is not an alert")
     model.scanning = true

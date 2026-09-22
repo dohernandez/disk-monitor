@@ -90,3 +90,10 @@ Alert categories: red ! for critical free space; orange ! for low free space or 
   update UI from a menu-bar app, and upgrade/relaunch while a measurement is active.
   Signature unit tests do not establish these interactive behaviors.
 - The installed v1.0.0 app needs a manual upgrade before it can use in-app updates.
+
+Permission-only scans: confirmed `du` permission denials show “Protected by macOS”
+(or “Partial · protected contents” when a lower-bound size is available). They do
+not trigger the menu-bar ? badge. Mixed, unknown and other scan failures still warn;
+free-space and growth thresholds are unchanged. Classification uses all diagnostics
+before display truncation. Legacy partial readings require a fresh scan before
+suppressing their warning. No filesystem permissions are changed.
