@@ -69,3 +69,13 @@ required CI checks and installer verification. Use `BUILD_DIR` for isolated buil
 Keep the bundle identity and user preferences stable across upgrades. A ruleset
 file is not proof that GitHub enforces it; verify server-side activation separately.
 Never label ad-hoc app signatures Apple-notarized.
+
+## Security invariants
+
+Never install an update without signature verification. Keep `SURequireSignedFeed`
+and `SUVerifyUpdateBeforeExtraction` enabled, preserve the committed public key,
+and never put private signing seeds in source, logs, or PR jobs. Signing secrets are
+restricted to the main-only release environment. Preserve 0700/0600 cache privacy
+and reject links before changing private-state permissions. Archive extraction must
+not write through symbolic links. Run the focused privacy/archive tests plus real
+Sparkle tamper-rejection checks after changes in these paths.

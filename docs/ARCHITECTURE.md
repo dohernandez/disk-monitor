@@ -1,7 +1,8 @@
 # Architecture and data
 
-Stable baseline: version 1.0.0, 2026-09-22. All runtime code is in
-[`main.swift`](../main.swift); packaging is in [`build.sh`](.sh build.sh).
+Stable baseline: version 1.0.0, 2026-09-22. Measurement/runtime code is in
+[`main.swift`](../main.swift), with updates in [`Updates.swift`](../Updates.swift);
+packaging is in [`build.sh`](../build.sh).
 Use symbol names below to navigate, since line numbers change.
 
 ## Source map
@@ -18,6 +19,8 @@ Use symbol names below to navigate, since line numbers change.
 | `RefreshSettings`, `Dashboard` | Settings and 440 × 690 point popup |
 | `StatusBadgeView`, `AppDelegate` | AppKit status item, badge, popup lifecycle |
 | `--self-test` branch | Fixture scanner/model regression checks |
+
+`Updates.swift` owns Sparkle startup, preferences and the Settings update controls.
 
 ## Lifecycle and threads
 
@@ -109,7 +112,7 @@ Each Reading has `bytes: Int64`, optional `previous: Int64`, `date: Date`, and o
 Foundation's default Codable Date representation (seconds since the reference date,
 not an ISO string). Absence of `incomplete` is treated as a complete legacy reading.
 Writes are atomic, but there is no schema version, backup, or migration framework.
-Read/decode/save failures are silently ignored through `try?`. Never rely on that
+Read/decode failures are silently ignored through `try?`; save failures set footer status. Never rely on that
 behavior as a safe migration strategy. Preserve a backup before changing the format.
 
 ## Known boundaries and follow-ups
@@ -132,10 +135,28 @@ These are documented limitations, not authorization to change the accepted behav
   lack dedicated automated coverage. Self-tests do not constitute full UI validation.
 - Version 1.0.0 sets both bundle metadata and the Swift deployment target to macOS 15.
   Native arm64 and x86_64 builds are validated separately by CI.
-- CI packages DMGs; there is no auto-update, launch-at-login, notarization, or multi-volume UI.
+- CI packages signed updates and DMGs; there is no launch-at-login, notarization, or multi-volume UI.
 
 Partial scan attribution: stderr is parsed under LC_ALL=C. A path-specific du error affects only that path, its ancestors, and descendants; unaffected sibling results are complete. Unrecognized diagnostics conservatively mark the whole scan partial. Complete saved measurements still survive an affected rescan; fresh complete results repair old partial labels without a growth delta. Optional Reading.scanError persists the diagnostic for partial readings (legacy JSON decodes without it). Hover “Partial · scan error” for the cause, or inspect the tracked-root alert. Previously saved partial flags remain until remeasurement; no flags are blindly cleared. Self-tests cover sibling isolation, prefix neighbors, colon paths, global fallback, merge protection and legacy/roundtrip persistence.
 
 Alert categories: red ! for critical free space; orange ! for low free space or large growth; yellow ? for incomplete/failed measurements (including unavailable free-space query). Highest priority wins: red > orange > yellow > none. The same type drives menu badge, per-alert symbol/color and Settings legend. Self-tests cover mixed-alert priority and failed-capacity classification.
 
 Menu bar recovery: AppDelegate is retained across app.run. DiskMonitor-status is the stable autosaveName; its own preferred-position key is seeded to 0 only when absent. The September 21 missing-icon incident was resolved by repositioning away from the notch, confirmed by the user; the lifetime guard alone did not resolve it. Launch --diagnostics logs startup and item geometry to /tmp/DiskMonitor-launch-diagnostic.jsonl. Match PID/time and compare frame to NSScreen.auxiliaryTopRightArea; isVisible alone is insufficient. Command-drag preserves the user’s chosen position. Do not reset global preferences or other apps.
+
+## Update and local-state security
+
+`Updates.swift` owns one Sparkle controller, started only by AppDelegate. It binds
+Settings directly to Sparkle's KVO preferences. Measurement timers are independent.
+The updater delegate postpones requested relaunches while measurements are active.
+The framework uses the public key and verification requirements in Info.plist; see
+[Releasing](RELEASING.md#signed-in-app-updates) for signing, hosting and trust boundaries.
+
+State directories use 0700 and files use 0600, including migration of existing files.
+Final state paths reject symbolic links; private files also reject hard links and
+unexpected ownership. Parent Application Support permissions are not changed.
+This protects against other local users, not another process already running as the
+same user or an administrator. Diagnostic subprocess error files are created at 0600.
+
+`PrivateReadings` tightens directory/file modes on load and writes through an
+exclusively created 0600 temporary file followed by atomic rename. Save failures
+are visible in the footer. Self-test Model instances use temporary state URLs.

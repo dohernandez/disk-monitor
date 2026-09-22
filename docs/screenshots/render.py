@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render current SwiftUI views with example data; no live app or screen capture."""
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -8,13 +9,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT.name
 source = (ROOT / "main.swift").read_text()
-marker = 'if CommandLine.arguments.contains("--self-test") {'
+marker = 'if CommandLine.arguments.contains("--updater-self-test") {'
 assert source.count(marker) == 1
 source = source.split(marker)[0]
 if APP == "disk-monitor":
-    assert source.count('        if let data = try? Data(contentsOf: saveURL)') == 1
+    assert source.count('        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL)') == 1
     assert source.count('@State private var showingSettings = false') == 1
-    start = source.index('        if let data = try? Data(contentsOf: saveURL)')
+    start = source.index('        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL)')
     end = source.index('    func scheduleTimers()', start)
     source = source[:start] + '    }\n' + source[end:]
     # Disable live saved-state loading, capacity queries and timers in the copy.
@@ -24,6 +25,8 @@ else:
     assert source.count('@State private var page="Usage"') == 1
     source = source.replace('@State private var page="Usage"',
         '@State private var page=CommandLine.arguments.contains("subscriptions") ? "Subscriptions" : "Usage"')
+sparkle = Path(os.environ.get('SPARKLE_TOOLS', str(ROOT / 'build/sparkle'))).resolve()
+assert (sparkle / 'Sparkle.framework').is_dir(), 'Build first or set SPARKLE_TOOLS to a built Sparkle directory'
 source += (ROOT / "docs/screenshots/fixture.swift").read_text()
 with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
     temporary = Path(directory)
@@ -38,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
     binary = temporary / "render"
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-vfsoverlay", str(overlay),
         "-Xcc", "-ivfsoverlay", "-Xcc", str(overlay), "-module-cache-path", str(temporary / "modules"),
-        str(temporary / "main.swift"), "-o", str(binary), "-framework", "Cocoa", "-framework", "SwiftUI"], check=True)
+        str(temporary / "main.swift"), str(ROOT / "Updates.swift"), "-F", str(sparkle), "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", str(sparkle), "-o", str(binary), "-framework", "Cocoa", "-framework", "SwiftUI"], check=True)
     pages = ["dashboard", "settings"] if APP == "disk-monitor" else ["usage", "subscriptions"]
     for page in pages:
         output = ROOT / "docs/screenshots" / (page + ".png")

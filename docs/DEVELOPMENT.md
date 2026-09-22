@@ -16,8 +16,8 @@ codesign --verify --deep --strict "build/Disk Monitor.app"
 Keep the complete build log when diagnosing failure. A successful build creates
 `build/Disk Monitor.app`, writes Info.plist, and ad-hoc signs the bundle. The script
 changes into its own directory, so it works when called from elsewhere. It compiles
-one Swift file with Cocoa and SwiftUI, optimization enabled and Swift 5 language mode.
-There is no package manager or external runtime dependency.
+Swift app and updater files with Cocoa, SwiftUI and Sparkle, optimization enabled and Swift 5 language mode.
+Sparkle is downloaded at build time using a pinned checksum and embedded in the app.
 
 The self-test runs real `du` against a disposable 1 MiB fixture, including a directory
 with spaces, missing-path error, and pre-cancellation. It exercises asynchronous
@@ -29,9 +29,7 @@ a unique UserDefaults suite. Successful output:
 PASS: scanner, folders, scan/queue states, alerts, configurable timers and preference persistence
 ```
 
-It does not launch the normal UI or intentionally scan tracked roots. Model instances
-still read the real readings file and query filesystem capacity; this is not a fully
-isolated integration harness. Fixture data and the test preference suite are removed
+It does not launch the normal UI or intentionally scan tracked roots. Model instances use temporary readings files and query filesystem capacity. Fixture data and the test preference suite are removed
 on success. It does not exercise live mid-process cancellation, appearance, or popup
 click behavior. Extend focused tests when changing those contracts.
 

@@ -79,3 +79,14 @@ Back returns to the dashboard; leaving Settings without Save discards draft edit
 Partial scan attribution: stderr is parsed under LC_ALL=C. A path-specific du error affects only that path, its ancestors, and descendants; unaffected sibling results are complete. Unrecognized diagnostics conservatively mark the whole scan partial. Complete saved measurements still survive an affected rescan; fresh complete results repair old partial labels without a growth delta. Optional Reading.scanError persists the diagnostic for partial readings (legacy JSON decodes without it). Hover “Partial · scan error” for the cause, or inspect the tracked-root alert. Previously saved partial flags remain until remeasurement; no flags are blindly cleared. Self-tests cover sibling isolation, prefix neighbors, colon paths, global fallback, merge protection and legacy/roundtrip persistence.
 
 Alert categories: red ! for critical free space; orange ! for low free space or large growth; yellow ? for incomplete/failed measurements (including unavailable free-space query). Highest priority wins: red > orange > yellow > none. The same type drives menu badge, per-alert symbol/color and Settings legend. Self-tests cover mixed-alert priority and failed-capacity classification.
+
+## Updates and privacy
+
+- Run `SPARKLE_TOOLS=<build-dir>/sparkle python3 -B scripts/test_signatures.py`.
+  Valid signed fixtures pass; changed installers, unsigned/changed feeds and wrong
+  keys must fail. PR CI repeats this with temporary keys on both architectures.
+- Verify cache migration preserves data, sets owner-only modes and rejects links.
+- Manually check Settings update controls, automatic preferences across restart,
+  update UI from a menu-bar app, and upgrade/relaunch while a measurement is active.
+  Signature unit tests do not establish these interactive behaviors.
+- The installed v1.0.0 app needs a manual upgrade before it can use in-app updates.

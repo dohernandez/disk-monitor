@@ -22,3 +22,7 @@ the temporary copy. Token Monitor’s collector is never started.
 Review the PNGs before committing them. Source-rewriting assertions should fail if
 the expected entry-point structure changes; update this helper alongside such changes.
 These previews check static presentation, not popup interactions or menu bar behavior.
+
+The renderer also compiles `Updates.swift`. Build first, or set `SPARKLE_TOOLS` to
+the built `sparkle` directory. Rendering never starts the updater; its manual check
+button is disabled and its version label says Preview in documentation images.

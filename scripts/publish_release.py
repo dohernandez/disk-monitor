@@ -6,6 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 from bundle_info import APP_NAME
+from verify_release import verify_assets
 
 
 def publish():
@@ -13,13 +14,17 @@ def publish():
     version = tag.removeprefix('v')
     dist = Path('dist')
     assets = []
+    config=json.loads(Path(__file__).with_name('update-config.json').read_text())
+    verifier=os.environ.get('UPDATE_VERIFIER','build/key_public')
     for arch in ('arm64', 'x86_64'):
         image = dist / (APP_NAME.replace(' ', '-') + '-' + version + '-macOS-' + arch + '.dmg')
         checksum = image.with_suffix('.dmg.sha256')
         expected = hashlib.sha256(image.read_bytes()).hexdigest() + '  ' + image.name + '\n'
         if checksum.read_text() != expected:
             raise ValueError('Installer checksum mismatch: ' + image.name)
-        assets.extend([image, checksum])
+        feed=dist/('appcast-'+arch+'.xml')
+        verify_assets(image,feed,version,config,verifier)
+        assets.extend([image, checksum, feed])
     result = subprocess.run(['gh','release','view',tag,'--json','isDraft,url'],text=True,capture_output=True)
     if result.returncode == 0:
         previous = json.loads(result.stdout)
@@ -34,7 +39,7 @@ def publish():
             'Existing preferences and local records are preserved.\n\n'
             '**Signing:** these downloads are ad-hoc signed, not Apple Developer ID-signed or notarized. '
             'macOS may block downloaded copies; see docs/RELEASING.md for installation and signing status.\n\n'
-            'SHA-256 checksums accompany both installers. '
+            'Ed25519 signatures authenticate updates and their feeds; SHA-256 files remain available for manual integrity checks. '
             'No login item or agent settings are changed during installation.\n\n'
             + ('Token Monitor includes Python. Claude quota observation is an optional, separate setup step; see docs/USAGE.md.\n\n' if APP_NAME=='Token Monitor' else '')
         )

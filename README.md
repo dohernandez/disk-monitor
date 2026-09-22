@@ -19,6 +19,7 @@ caches without leaving your current app.
 - [Usage](#usage)
 - [Alerts](#alerts)
 - [Privacy and measurement limits](#privacy-and-measurement-limits)
+- [App updates](#app-updates)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 
@@ -32,11 +33,11 @@ caches without leaving your current app.
 
 Built with SwiftUI and AppKit. **Version 1.0.0** is the first stable version. CI produces drag-to-Applications DMGs
 for macOS 15+, with separate Apple Silicon and Intel downloads. Builds are ad-hoc
-signed; Apple notarization, auto-update, and launch-at-login are not configured.
+signed; Apple notarization and launch-at-login are not configured. Signed in-app updates are available from Settings.
 
 ## Installation
 
-Download the DMG for your Mac from [Releases](https://github.com/dohernandez/disk-monitor/releases), quit the previous copy, and drag the app into **Applications**. The first downloads appear after the release PR merges and CI finishes. These builds are not Apple-notarized; see the [release and installation guide](docs/RELEASING.md).
+Download the DMG for your Mac from [Releases](https://github.com/dohernandez/disk-monitor/releases), quit the previous copy, and drag the app into **Applications**. These builds are not Apple-notarized; see the [release and installation guide](docs/RELEASING.md).
 
 ### Build from source
 
@@ -104,8 +105,8 @@ These are visual menu bar alerts, not macOS notification banners.
 
 ## Privacy and measurement limits
 
-Everything runs locally. There is no telemetry or network service, and the app never
-deletes monitored files. Its own saved measurements stay in
+Measurements run locally and the app never deletes monitored files. Optional update
+checks contact GitHub; no measurements or system profile are sent. There is no telemetry. Its own saved measurements stay in
 `~/Library/Application Support/DiskMonitor/`.
 
 Folder sizes can overlap or share APFS storage: **do not add them together or treat
@@ -113,6 +114,17 @@ them as guaranteed reclaimable space**. The top five covers tracked candidates, 
 the entire disk. Partial results show **≥**; failed scans preserve earlier complete
 readings. Protected folders can remain unreadable. Nix reclaimable space and
 Docker-internal accounting are not implemented.
+
+## App updates
+
+Open **Settings → App updates** to check manually or enable daily checks and automatic
+installation. Automatic options default off and save immediately. The app verifies
+Ed25519 signatures on the feed and download before extraction; a checksum alone is
+not accepted. Version 1.0.0 needs one manual upgrade to gain this feature. See the
+[update and key-management guide](docs/RELEASING.md#signed-in-app-updates).
+
+Cache directories are restricted to the owner (0700), with private cache files at
+0600. Existing cache permissions are tightened without resetting saved data.
 
 ## Documentation
 
