@@ -1,142 +1,130 @@
-# Disk Monitor — draft 01
+# Disk Monitor
 
-A native macOS menu bar app for seeing free disk space, large development folders,
-and growth between scans. Click the drive icon to open the dashboard. It runs locally,
-with no network service, telemetry, cleanup actions, or login item.
+**See where your disk space goes, straight from the macOS menu bar.**
 
-## Start here
+Disk Monitor shows free space, your five largest measured folders, and growth between
+scans in a compact native dashboard. Follow projects, worktrees, and shared development
+caches without leaving your current app.
 
-- [Agent maintenance rules](AGENTS.md): read before changing the app.
-- [Architecture and data](docs/ARCHITECTURE.md): source map, scanning, timers, storage, and limitations.
-- [Development and recovery](docs/DEVELOPMENT.md): build, checks, safe replacement, and rollback.
-- [Acceptance checklist](docs/ACCEPTANCE.md): behaviors to preserve when making changes.
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Disk Monitor dashboard showing free space and the five largest measured folders" width="440">
+</p>
 
-## Build and open
+*Current SwiftUI interface rendered with illustrative folder sizes. This is example data, not a live disk reading.*
 
-Requires macOS, Apple Command Line Tools with Swift, and Python 3.
+## Table of contents
+
+- [Overview](#overview)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Alerts](#alerts)
+- [Privacy and measurement limits](#privacy-and-measurement-limits)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+
+## Overview
+
+- **Free space at a glance.** A lightweight capacity check runs separately from folder scans.
+- **Find growing folders.** The top five ranks measured projects and caches; expand the tree to investigate.
+- **See scan progress.** Active and queued folders have distinct indicators, with previous sizes kept visible.
+- **Choose your cadence.** Configure free-space and folder-scan intervals independently.
+- **Know when to look.** Menu bar badges distinguish low space, large growth, and incomplete measurements.
+
+Built with SwiftUI and AppKit. **Draft 01** is a local, ad-hoc signed app; there is no
+notarized release, installer, auto-update, or launch-at-login setup.
+
+## Installation
+
+You need a Mac with Apple Command Line Tools (Swift) and Python 3 for the build script.
+The current build was developed on Apple Silicon with a macOS 15 SDK; older macOS and
+Intel compatibility have not been established.
 
 ```sh
+git clone https://github.com/dohernandez/disk-monitor.git
+cd disk-monitor
 ./build.sh
 "build/Disk Monitor.app/Contents/MacOS/DiskMonitor" --self-test
+codesign --verify --deep --strict "build/Disk Monitor.app"
 open "build/Disk Monitor.app" --args --show
 ```
 
-If the app is already running, follow the replacement procedure in
-[Development](docs/DEVELOPMENT.md) first. The build overwrites the local bundle.
-This is a local, ad-hoc signed draft, not a notarized distribution. Older macOS
-compatibility is not established; see the deployment-target limitation below.
+The app lives in `build/Disk Monitor.app`. Run each command only after the preceding
+one succeeds. When updating a running copy, follow [safe replacement and recovery](docs/DEVELOPMENT.md).
 
-## Using the dashboard
+## Usage
 
-The header shows free space on the filesystem containing your home directory.
-The top five ranks measured projects, worktree repositories, and cache folders.
-Click a ranked folder or folder alert to reveal it in the expandable tree.
-This is a ranking of tracked candidates, not a whole-disk search.
+Click the drive icon in the menu bar to open the dashboard. Click a top-five entry to
+reveal its folder, or expand folder rows to explore children, largest first.
 
-- Folder rows expand or collapse. Children are sorted by measured size, largest first;
-  unmeasured children follow. All rows start collapsed on launch.
-- The **refresh arrow (Scan now)** measures existing tracked roots sequentially. A row's refresh button
-  measures that folder. the **stop-circle (Stop scan)** discards the unfinished result and keeps completed readings.
-- Spinners identify active folders; clocks identify folders waiting in the current batch.
-  Previous sizes stay visible until a measurement completes.
-- The **folder-plus icon (Add folder)** adds a tracked root. Right-click a row to scan, copy its path, or show
-  it in Finder. Added roots also offer **Stop tracking**; this never deletes the folder.
-- The info icon explains measurements. The gear opens settings and the alert legend. **Back** discards unsaved edits;
-  **Save settings** applies them. **Quit Disk Monitor** is the power icon in the footer.
-- Click outside the popup, press Escape, or click its menu bar icon again to close it.
+| Control | Action |
+|---|---|
+| Folder plus | Add another tracked folder |
+| Refresh / stop | Scan tracked folders, or stop the current scan |
+| Row refresh | Measure that folder and its next two levels |
+| Info | Explain how measurements work |
+| Settings | Change refresh intervals and read the alert legend |
+| Power | Quit Disk Monitor |
 
-## Refresh and resource use
+Free space defaults to **every 30 seconds**; folder scans default to **every 5 minutes**.
+Saved preferences take precedence. Scans run in the background, one at a time; a
+busy automatic tick is skipped. Click outside or press Escape to dismiss the popup.
 
-| Setting | Default | Allowed values | Work performed |
-|---|---|---|---|
-| Free disk space | 30 seconds | 5–3,600 seconds | Filesystem capacity query; no directory walk |
-| Folder sizes | 5 minutes | 1–1,440 minutes | Recursive `du`, one tracked root at a time |
+Default folders include `~/Documents/YeagerAI`, Library caches, Go modules, Cargo,
+Rust toolchains, Anvil scratch, Claude history, and Docker VM storage. The project
+root is currently specific to that layout; use **Add folder** for your own roots.
+See the [usage guide](docs/USAGE.md) for exact paths and scan behavior.
 
-Settings persist across restarts. Existing saved choices take precedence over defaults.
-Opening the popup refreshes free space, not folder sizes. Launch scans roots with
-missing or old readings. An automatic tick during a scan is skipped; scans do not overlap.
-Saving intervals replaces both timers without interrupting an active scan.
+<details>
+<summary>View settings and the alert legend</summary>
 
-Folder scans can take seconds or minutes and create disk I/O; cost depends on file
-count and filesystem load. No fixed CPU/memory or duration guarantee has been measured.
-Top-five rankings and alerts use cached readings and do not trigger extra scans.
+<p align="center">
+  <img src="docs/screenshots/settings.png" alt="Disk Monitor settings with independent refresh intervals and the alert legend" width="440">
+</p>
 
-## Alert legend
+*Current interface with default example settings.*
+
+</details>
+
+## Alerts
 
 | Badge | Meaning |
 |---|---|
-| Red | Less than **125 GiB** free |
-| Orange ! | Less than **300 GiB** free, or folder growth of **10 GiB or more** between comparable scans |
-| Yellow ? | Incomplete/failed tracked-root measurement or unavailable free-space reading |
-| No badge | No active alerts in the available readings |
+| 🔴 Red ! | Less than **125 GiB** free |
+| 🟠 Orange ! | Less than **300 GiB** free, or growth of **10 GiB or more** between comparable scans |
+| 🟡 Yellow ? | Incomplete or failed tracked-root measurement, or unavailable free-space reading |
+| No badge | No active alert in the available readings |
 
-Red takes priority over orange, then yellow. Failed free-space queries show yellow ?. At exactly 125 GiB the
-space warning is orange; at exactly 300 GiB there is no space warning. Click the
-icon for the reasons. These are visual alerts, not macOS notification banners.
-Cancellation alone does not raise an alert. Growth changes only after folder scans;
-it compares the latest comparable measurements, not a fixed time window.
+Red takes priority over orange, then yellow. Click the icon to see the reason.
+These are visual menu bar alerts, not macOS notification banners.
 
-## What is tracked
+## Privacy and measurement limits
 
-Paths are relative to your home directory:
+Everything runs locally. There is no telemetry or network service, and the app never
+deletes monitored files. Its own saved measurements stay in
+`~/Library/Application Support/DiskMonitor/`.
 
-| Row | Path |
+Folder sizes can overlap or share APFS storage: **do not add them together or treat
+them as guaranteed reclaimable space**. The top five covers tracked candidates, not
+the entire disk. Partial results show **≥**; failed scans preserve earlier complete
+readings. Protected folders can remain unreadable. Nix reclaimable space and
+Docker-internal accounting are not implemented.
+
+## Documentation
+
+| Guide | Contents |
 |---|---|
-| Projects · YeagerAI | `~/Documents/YeagerAI` (including its `worktree/` tree) |
-| Library caches | `~/Library/Caches` |
-| Go modules | `~/go/pkg/mod` |
-| Cargo | `~/.cargo` |
-| Rust toolchains | `~/.rustup` |
-| Anvil temporary files | `~/.foundry/anvil/tmp` |
-| Claude session history | `~/.claude/projects` |
-| Docker VM storage | `~/Library/Containers/com.docker.docker/Data/vms` |
+| [Usage and measurements](docs/USAGE.md) | Tracked paths, refresh behavior, sizes and partial readings |
+| [Architecture](docs/ARCHITECTURE.md) | Source map, lifecycle, scanner, persistence and known gaps |
+| [Development and recovery](docs/DEVELOPMENT.md) | Build, tests, safe replacement, backups and missing-icon diagnosis |
+| [Acceptance checks](docs/ACCEPTANCE.md) | Behavior and UI checks to preserve |
+| [Agent instructions](AGENTS.md) | Rules for agents maintaining the project |
+| [Screenshot sources](docs/screenshots/README.md) | Reproduce these previews without reading live measurements |
 
-The project root is currently specific to this machine's layout. Use **Add folder**
-for other roots or for deep folders needing their own scheduled measurements.
-Nix is an informational row only; Nix reclamation and Docker-internal accounting
-are not implemented.
+## Contributing
 
-## Reading sizes correctly
+Read the architecture and maintenance rules before changing behavior. Keep changes
+focused, preserve saved settings and measurements, and run the checks relevant to
+your change. Use temporary folders for scanner tests. Include the validation results
+and updated screenshots for visible UI changes in your pull request.
 
-`du -k -d 2` recursively measures a root but reports only two levels beneath it.
-Expand further and scan a row for deeper readings. The tree lists directories only;
-folder totals also include files. Hidden directories are included; symlink directories
-are not expanded. Sizes use binary formatting, although the formatter displays labels
-such as GB rather than GiB.
-
-Folders may overlap or share APFS storage. Do not sum rows or treat their sizes as
-space guaranteed to be reclaimable. Free space and folder totals are different measurements.
-A failed scan keeps an existing complete reading. Without a complete reading, partial
-results show **≥** and have no growth comparison. Hover a size to see its measurement time.
-Protected folders may be unreadable; permission failures are not zero-byte results.
-The app does not request Accessibility or Screen Recording permission.
-
-Readings and added roots live in
-`~/Library/Application Support/DiskMonitor/readings.json`; intervals use UserDefaults.
-The popup intentionally uses a soft charcoal theme. Its drive icon follows the native
-menu bar tint, with a separate colored warning badge.
-
-Known draft gaps include stale cached paths, limited scan-error persistence, and no
-schema migration or backup system. The bundle declares macOS 13, but the build does
-not explicitly target it and the UI uses newer APIs. Do not claim macOS 13 support.
-See [Architecture](docs/ARCHITECTURE.md) for details.
-
-The compact footer places status and measurement time on the left, and folder-plus,
-refresh/stop, info, and settings icons on the right. Each icon has a tooltip and
-accessibility label. Refresh still scans folders; it is not a separate capacity button.
-
-Info and Settings use a compact title header and retain the dashboard footer.
-Clicking either icon again returns to the dashboard; switching icons goes directly
-to the other view. Both pages offer a Quit footer icon and Back fixed above the footer on the right.
-
-Quit is the rightmost power icon in the persistent footer. On Info and Settings,
-Back stays fixed immediately above that footer, right-aligned, outside scrolling
-content. Leaving Settings with Back discards unsaved edits.
-
-Partial scan attribution: stderr is parsed under LC_ALL=C. A path-specific du error affects only that path, its ancestors, and descendants; unaffected sibling results are complete. Unrecognized diagnostics conservatively mark the whole scan partial. Complete saved measurements still survive an affected rescan; fresh complete results repair old partial labels without a growth delta. Optional Reading.scanError persists the diagnostic for partial readings (legacy JSON decodes without it). Hover “Partial · scan error” for the cause, or inspect the tracked-root alert. Previously saved partial flags remain until remeasurement; no flags are blindly cleared. Self-tests cover sibling isolation, prefix neighbors, colon paths, global fallback, merge protection and legacy/roundtrip persistence.
-
-AppDelegate must stay strongly retained across the complete NSApplication.run() call using withExtendedLifetime. NSApplication.delegate is weak; losing the delegate also loses its NSStatusItem and can leave an iconless process running. Preserve this lifetime guard in both optimized and debug builds.
-
-Launch with --diagnostics to record startup and status-item geometry in /tmp/DiskMonitor-launch-diagnostic.jsonl. isVisible does not prove unobscured placement; compare the frame with NSScreen.auxiliaryTopRightArea. Diagnostic logging is off normally.
-
-Each status item has a stable app-specific autosaveName. Its own NSStatusItem Preferred Position preference is seeded to 0 only when absent, to start at the right end rather than behind the notch. Subsequent user placement is preserved. This AppKit preference is not a public positioning API and needs rechecking on OS upgrades; precedent: https://github.com/jordanbaird/Ice/blob/main/Ice/MenuBar/ControlItem/ControlItem.swift . Other apps and global preferences are untouched.
+Companion app: [Token Monitor](https://github.com/dohernandez/token-monitor).
