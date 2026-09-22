@@ -78,7 +78,7 @@ func sizeText(_ bytes: Int64) -> String {
 }
 struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil }
 struct Root: Codable, Identifiable { var path: String; var title: String; var id: String { path } }
-struct Saved: Codable { var readings: [String: Reading]; var extras: [Root] }
+struct Saved: Codable { var readings: [String: Reading]; var extras: [Root]; var projectPath: String? = nil; var excludedPaths: [String]? = nil }
 struct DiskAlert: Identifiable {
     let id: String
     let critical: Bool
@@ -189,14 +189,25 @@ final class Model: ObservableObject {
     @Published var errors: [String: String] = [:]
     @Published var lastMeasuredAt: Date?
     let scanner = Scanner()
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let home: String
+    @Published var projectPath: String?
+    @Published var excludedPaths: Set<String> = []
     var onStatus: (() -> Void)?
     var timer: Timer?
     var folderTimer: Timer?
     let preferences: UserDefaults
     @Published private(set) var diskInterval = 30
     @Published private(set) var folderInterval = 300
-    var project: Root { Root(path: home + "/Documents/YeagerAI", title: "Projects · YeagerAI") }
+    var project: Root {
+        let path = projectPath ?? home + "/Documents/YeagerAI"
+        return Root(path: path, title: "Projects · " + URL(fileURLWithPath: path).lastPathComponent)
+    }
+    var projectRoots: [Root] {
+        (projectPath != nil || readings[project.path] != nil) && !excludedPaths.contains(project.path) ? [project] : []
+    }
+    var trackedRoots: [Root] { projectRoots + caches + extras }
+    func isTracked(_ path: String) -> Bool { trackedRoots.contains { path == $0.path || path.hasPrefix($0.path + "/") } }
+
     var caches: [Root] { [
         Root(path: home + "/Library/Caches", title: "Library caches"),
         Root(path: home + "/go/pkg/mod", title: "Go modules"),
@@ -205,16 +216,18 @@ final class Model: ObservableObject {
         Root(path: home + "/.foundry/anvil/tmp", title: "Anvil temporary files"),
         Root(path: home + "/.claude/projects", title: "Claude session history"),
         Root(path: home + "/Library/Containers/com.docker.docker/Data/vms", title: "Docker VM storage")
-    ] }
+    ].filter { !excludedPaths.contains($0.path) && (FileManager.default.fileExists(atPath: $0.path) || readings[$0.path] != nil) && !projectRoots.map(\.path).contains($0.path) }
+    }
     let saveURL: URL
-    init(preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json")) {
+    init(home: String = FileManager.default.homeDirectoryForCurrentUser.path, preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json")) {
+        self.home = home
         self.saveURL = saveURL
         self.preferences = preferences
         let disk = preferences.object(forKey: "diskRefreshSeconds") as? Int ?? 30
         let folder = preferences.object(forKey: "folderRefreshSeconds") as? Int ?? 300
         diskInterval = (5...3600).contains(disk) ? disk : 30
         folderInterval = (60...86400).contains(folder) ? folder : 300
-        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; status = "Showing saved folder measurements" }
+        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; projectPath = saved.projectPath; excludedPaths = Set(saved.excludedPaths ?? []); status = "Showing saved folder measurements" }
         lastMeasuredAt = readings.values.map(\.date).max()
         refreshCapacity()
         scheduleTimers()
@@ -235,10 +248,10 @@ final class Model: ObservableObject {
         return true
     }
     func scanAllFolders() {
-        scan([project] + caches + extras)
+        scan(trackedRoots)
     }
     func scanMissingRoots() {
-        let roots = [project] + caches + extras
+        let roots = trackedRoots
         let missing = roots.filter { root in
             guard let reading = readings[root.path] else { return true }
             return Date().timeIntervalSince(reading.date) >= TimeInterval(folderInterval)
@@ -275,14 +288,14 @@ final class Model: ObservableObject {
     var alerts: [DiskAlert] {
         var result: [DiskAlert] = []
         if let alert = diskSpaceAlert(free: free, capacity: capacity) { result.append(alert) }
-        let roots = [project] + caches + extras
+        let roots = trackedRoots
         for root in roots {
             let error = errors[root.path]
             if !isProtected(root.path) && ((error != nil && error != "Cancelled") || readings[root.path]?.incomplete == true) {
                 result.append(DiskAlert(id: "scan:" + root.path, critical: false, title: "Incomplete scan · " + root.title, detail: error ?? readings[root.path]?.scanError ?? "Some contents could not be measured. Rescan the folder for specific error details.", path: root.path, measurementIssue: true))
             }
         }
-        let growth = readings.filter { $0.value.incomplete != true && $0.value.previous != nil && $0.value.bytes - $0.value.previous! >= 10 * gib }.sorted {
+        let growth = readings.filter { isTracked($0.key) && $0.value.incomplete != true && $0.value.previous != nil && $0.value.bytes - $0.value.previous! >= 10 * gib }.sorted {
             ($0.value.bytes - $0.value.previous!) > ($1.value.bytes - $1.value.previous!)
         }
         var selected: [String] = []
@@ -332,7 +345,7 @@ final class Model: ObservableObject {
         })
         for root in caches where root.path != library { candidates.insert(root.path) }
         for root in extras { candidates.insert(root.path) }
-        let sorted = candidates.filter { readings[$0] != nil }.sorted {
+        let sorted = candidates.filter { readings[$0] != nil && isTracked($0) }.sorted {
             let a = readings[$0]!.bytes, b = readings[$1]!.bytes
             return a == b ? $0 < $1 : a > b
         }
@@ -348,7 +361,7 @@ final class Model: ObservableObject {
         }
     }
     func reveal(_ path: String) {
-        let roots = [project] + caches + extras
+        let roots = trackedRoots
         guard let root = roots.filter({ path == $0.path || path.hasPrefix($0.path + "/") }).min(by: { $0.path.count < $1.path.count }) else { return }
         var ancestor = URL(fileURLWithPath: path).deletingLastPathComponent().path
         while ancestor == root.path || ancestor.hasPrefix(root.path + "/") {
@@ -365,7 +378,7 @@ final class Model: ObservableObject {
     }
     func save() {
         do {
-            try PrivateReadings.write(JSONEncoder().encode(Saved(readings: readings, extras: extras)), to: saveURL)
+            try PrivateReadings.write(JSONEncoder().encode(Saved(readings: readings, extras: extras, projectPath: projectPath, excludedPaths: Array(excludedPaths).sorted())), to: saveURL)
         } catch { status = "Could not save private folder measurements" }
     }
     func scan(_ roots: [Root]) {
@@ -411,10 +424,33 @@ final class Model: ObservableObject {
             }
         }
     }
+    func stopTracking(_ path: String) {
+        excludedPaths.insert(path)
+        extras.removeAll { $0.path == path }
+        if project.path == path { projectPath = nil }
+        save(); onStatus?()
+    }
+    func setProjects(_ path: String) {
+        if project.path != path { excludedPaths.insert(project.path) }
+        projectPath = path
+        excludedPaths.remove(path)
+        extras.removeAll { $0.path == path }
+        save(); onStatus?()
+    }
+    func chooseProjects() {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.prompt = "Choose Projects folder"
+        if panel.runModal() == .OK, let url = panel.url { setProjects(url.path) }
+    }
+    func addFolder(_ url: URL) {
+        excludedPaths.remove(url.path)
+        if !trackedRoots.contains(where: { $0.path == url.path }) { extras.append(Root(path: url.path, title: url.lastPathComponent)) }
+        save(); onStatus?()
+    }
     func choose() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true; panel.prompt = "Track folder"
         if panel.runModal() == .OK {
-            for url in panel.urls where !extras.contains(where: { $0.path == url.path }) { extras.append(Root(path: url.path, title: url.lastPathComponent)) }
+            for url in panel.urls { addFolder(url) }
             save()
         }
     }
@@ -452,6 +488,7 @@ struct FolderRow: View {
                 if let r = model.readings[root.path] {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text((r.incomplete == true ? "≥ " : "") + sizeText(r.bytes)).fontWeight(.medium).monospacedDigit()
+                        if !FileManager.default.fileExists(atPath: root.path) { Text("Not found · saved size").font(.system(size: 10)).foregroundStyle(Palette.secondary) }
                         if model.scanState(root.path) != .idle {
                             Text(model.scanState(root.path) == .scanning ? "Scanning…" : "Queued…").font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.accent)
                         }
@@ -477,7 +514,7 @@ struct FolderRow: View {
                 Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: root.path) }
                 Button("Scan this folder") { model.scan([root]) }.disabled(model.scanning)
                 Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(root.path, forType: .string) }
-                if model.extras.contains(where: { $0.path == root.path }) { Button("Stop tracking") { model.extras.removeAll { $0.path == root.path }; model.save() } }
+                if model.trackedRoots.contains(where: { $0.path == root.path }) { Button("Stop tracking") { model.stopTracking(root.path) } }
             }
             if model.expanded.contains(root.path) {
                 let children = model.children(root.path)
@@ -674,7 +711,9 @@ struct Dashboard: View {
                     LargestFolders(model: model)
                     Divider().padding(.vertical, 3)
                     HStack { Text("FOLDERS").fontWeight(.semibold); Spacer(); Text("Size / change") }.font(.system(size: 10)).foregroundStyle(Palette.secondary)
-                    FolderRow(model: model, root: model.project)
+                    ForEach(model.projectRoots) { root in FolderRow(model: model, root: root) }
+                    Button(model.projectRoots.isEmpty ? "Choose Projects folder…" : "Change Projects folder…") { model.chooseProjects() }
+                        .buttonStyle(.plain).foregroundStyle(Palette.accent).font(.system(size: 11))
                     Text("SHARED CACHES & TOOLS").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
                     VStack(spacing: 1) { ForEach(model.caches) { root in FolderRow(model: model, root: root) } }
                     HStack {
@@ -883,6 +922,36 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(decodedLegacy.scanError==nil)
     let roundtrip=try JSONDecoder().decode(Reading.self,from:JSONEncoder().encode(partial))
     precondition(roundtrip.scanError=="denied")
+    let portableHome = root.appendingPathComponent("portable-home")
+    try fm.createDirectory(at: portableHome.appendingPathComponent("Library/Caches"), withIntermediateDirectories: true)
+    let portableURL = root.appendingPathComponent("portable-state/readings.json")
+    let portable = Model(home: portableHome.path, saveURL: portableURL)
+    precondition(portable.projectRoots.isEmpty && portable.caches.count == 1)
+    portable.stopTracking(portable.caches[0].path)
+    precondition(portable.trackedRoots.isEmpty)
+    let selected = portableHome.appendingPathComponent("My Projects")
+    portable.setProjects(selected.path)
+    precondition(portable.projectRoots.first?.path == selected.path)
+    portable.addFolder(selected)
+    precondition(portable.trackedRoots.count == 1, "Do not duplicate Projects as an extra")
+    let missing = portableHome.appendingPathComponent("missing-manual")
+    portable.addFolder(missing)
+    precondition(portable.measurementLabel(missing.path) == "Not found")
+    portable.readings[selected.path] = Reading(bytes: 30*gib, previous: 0, date: Date())
+    portable.save()
+    let reopened = Model(home: portableHome.path, saveURL: portableURL)
+    precondition(reopened.caches.isEmpty && reopened.project.path == selected.path && reopened.extras.count == 1)
+    reopened.stopTracking(selected.path)
+    precondition(reopened.projectRoots.isEmpty && reopened.readings[selected.path] != nil)
+    precondition(!reopened.alerts.contains { $0.path == selected.path } && !reopened.largestFolders.contains { $0.path == selected.path })
+    let oldSaved = Saved(readings: [portableHome.path + "/Documents/YeagerAI": complete], extras: [])
+    try PrivateReadings.write(JSONEncoder().encode(oldSaved), to: portableURL)
+    let migrated = Model(home: portableHome.path, saveURL: portableURL)
+    precondition(migrated.projectRoots.count == 1 && migrated.readings[migrated.project.path]?.bytes == complete.bytes)
+    migrated.setProjects(selected.path)
+    migrated.stopTracking(selected.path)
+    precondition(migrated.projectRoots.isEmpty, "Stopping a replacement must not resurrect legacy Projects")
+    for fixtureModel in [portable, reopened, migrated] { fixtureModel.timer?.invalidate(); fixtureModel.folderTimer?.invalidate() }
     let scanner = Scanner(), result = scanner.scan(root.path)
     precondition(result.error == nil && (result.values[root.path] ?? 0) >= 1024 * 1024)
     precondition(result.values[root.appendingPathComponent("folder with spaces").path] != nil)

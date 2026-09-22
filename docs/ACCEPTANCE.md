@@ -97,3 +97,20 @@ not trigger the menu-bar ? badge. Mixed, unknown and other scan failures still w
 free-space and growth thresholds are unchanged. Classification uses all diagnostics
 before display truncation. Legacy partial readings require a fresh scan before
 suppressing their warning. No filesystem permissions are changed.
+
+## Portable tracked folders
+
+Fresh installations detect existing common cache directories and ask the user to
+choose a Projects folder. A legacy saved YeagerAI Projects reading is preserved
+as the project root; new installations do not assume that layout. Changing Projects
+replaces the root without deleting measurements. Right-click any tracked root to
+stop tracking; exclusions persist across restarts and Add folder can restore a root.
+Stopped roots no longer contribute to scans, alerts or rankings unless covered by
+another tracked ancestor. Manually added missing folders remain visible as Not found;
+saved sizes are explicitly labelled when their folder is missing.
+
+Saved JSON adds optional projectPath and excludedPaths fields. Old JSON decodes
+without them; older app versions ignore them (and may show default folders again).
+No files are deleted and no preferences or permissions reset. Regression fixtures
+cover an empty/default home, selection, duplicate prevention, missing custom paths,
+restart persistence, legacy migration and removal from alerts/rankings.
