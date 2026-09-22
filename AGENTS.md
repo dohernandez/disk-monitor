@@ -7,7 +7,7 @@ implementation truth; document disagreements rather than silently broadening sco
 
 ## Scope and workflow
 
-- Make the requested change only. Preserve the accepted draft's behavior and user data.
+- Make the requested change only. Preserve the accepted version's behavior and user data.
 - Inspect current files before editing; another session may have changed them.
 - `main.swift` owns the app, model, scanner, and self-tests. `build.sh` packages it.
   `build/` is generated. Do not hand-patch the binary or system toolchain.
@@ -61,3 +61,11 @@ when changing scanner, timers, persistence, alerts, or tree state. Exercise the
 relevant manual acceptance checks for UI changes; say if they remain unverified.
 Do not weaken tests to restore a previously rejected behavior. Keep validation
 bounded and avoid unrelated full-machine work.
+
+## Releases
+
+Read [Release policy](docs/RELEASING.md) for stable versioning, signed commits,
+required CI checks and installer verification. Use `BUILD_DIR` for isolated builds.
+Keep the bundle identity and user preferences stable across upgrades. A ruleset
+file is not proof that GitHub enforces it; verify server-side activation separately.
+Never label ad-hoc app signatures Apple-notarized.

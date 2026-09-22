@@ -577,7 +577,7 @@ struct Dashboard: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("DISK MONITOR", systemImage: "internaldrive").font(.system(size: 11, weight: .semibold)).tracking(1.2)
-                    Spacer(); Text("DRAFT 01").font(.system(size: 9, weight: .medium)).padding(.horizontal, 7).padding(.vertical, 4).background(.white.opacity(0.12), in: Capsule())
+                    Spacer(); Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")).font(.system(size: 9, weight: .medium)).padding(.horizontal, 7).padding(.vertical, 4).background(.white.opacity(0.12), in: Capsule())
                 }.foregroundStyle(.white.opacity(0.8))
                 if !showingSettings && !showingInformation {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {

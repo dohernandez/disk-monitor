@@ -30,19 +30,24 @@ caches without leaving your current app.
 - **Choose your cadence.** Configure free-space and folder-scan intervals independently.
 - **Know when to look.** Menu bar badges distinguish low space, large growth, and incomplete measurements.
 
-Built with SwiftUI and AppKit. **Draft 01** is a local, ad-hoc signed app; there is no
-notarized release, installer, auto-update, or launch-at-login setup.
+Built with SwiftUI and AppKit. **Version 1.0.0** is the first stable version. CI produces drag-to-Applications DMGs
+for macOS 15+, with separate Apple Silicon and Intel downloads. Builds are ad-hoc
+signed; Apple notarization, auto-update, and launch-at-login are not configured.
 
 ## Installation
 
+Download the DMG for your Mac from [Releases](https://github.com/dohernandez/disk-monitor/releases), quit the previous copy, and drag the app into **Applications**. The first downloads appear after the release PR merges and CI finishes. These builds are not Apple-notarized; see the [release and installation guide](docs/RELEASING.md).
+
+### Build from source
+
 You need a Mac with Apple Command Line Tools (Swift) and Python 3 for the build script.
-The current build was developed on Apple Silicon with a macOS 15 SDK; older macOS and
-Intel compatibility have not been established.
+The deployment target is explicitly macOS 15. CI builds and tests Apple Silicon and
+Intel separately; older macOS versions are not supported.
 
 ```sh
 git clone https://github.com/dohernandez/disk-monitor.git
 cd disk-monitor
-./build.sh
+sh build.sh
 "build/Disk Monitor.app/Contents/MacOS/DiskMonitor" --self-test
 codesign --verify --deep --strict "build/Disk Monitor.app"
 open "build/Disk Monitor.app" --args --show
@@ -118,6 +123,7 @@ Docker-internal accounting are not implemented.
 | [Development and recovery](docs/DEVELOPMENT.md) | Build, tests, safe replacement, backups and missing-icon diagnosis |
 | [Acceptance checks](docs/ACCEPTANCE.md) | Behavior and UI checks to preserve |
 | [Agent instructions](AGENTS.md) | Rules for agents maintaining the project |
+| [Releases and branch rules](docs/RELEASING.md) | Automated versions, installer verification, signing and main protection |
 | [Screenshot sources](docs/screenshots/README.md) | Reproduce these previews without reading live measurements |
 
 ## Contributing

@@ -1,0 +1,131 @@
+# Releases, installation and main-branch protection
+
+Version **1.0.0** is the first stable version. Stable describes the accepted feature
+baseline; builds are still **ad-hoc signed, not Apple Developer ID-signed or notarized**.
+No signing identity or Apple credentials are stored in this repository.
+
+## Install a release
+
+1. Download the `.dmg` from this repository’s Releases page: **arm64** for Apple
+   Silicon, **x86_64** for Intel. Both require macOS 15 or later.
+2. Optionally check the download with `shasum -a 256 -c <filename>.dmg.sha256` from
+   the directory containing both files.
+3. Quit the previous app, open the DMG, and drag the app onto Applications.
+4. Launch the copy in Applications, then eject the DMG. The app lives in the menu
+   bar; Command-drag its icon to reposition it. Do not run duplicate copies.
+
+The app’s bundle identity and user-data paths are unchanged. Replacing the app does
+not reset settings, readings, or token history. No login item or agent hook is installed.
+
+An unnotarized internet download can be blocked by Gatekeeper. If you trust the
+source and have checked the download, use macOS **System Settings → Privacy &
+Security → Open Anyway** after the blocked launch. Do not globally disable Gatekeeper.
+Apple’s guidance: [Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+
+## CI flow
+
+`.github/workflows/macos.yml` runs for PRs to `main`, pushes to `main` (including
+merges), and manual dispatch. Closing a PR without merging never publishes a release.
+Manual dispatch publishes only when run from `main`.
+
+Every PR runs:
+
+- **Commit signatures:** every new PR commit must be verified by GitHub.
+- **Test and build (arm64):** native macOS 15 build, release helper tests, native
+  self-tests, signature integrity, DMG creation/verification and mounted-app checks.
+- **Test and build (x86_64):** the same checks on the Intel macOS 15 runner.
+
+Token Monitor additionally runs its Python accounting/observer suite with the
+bundled interpreter and a collector smoke test against a temporary empty home/state.
+Neither installer verification nor CI installs an observer or reads real agent data.
+The disk self-tests use fixture directories; their model still reads local saved
+measurements if present, as documented in Development.
+
+After a main build passes all checks:
+
+1. Reserve a semantic version tag at the exact tested commit.
+2. Download those tested app bundles, stamp their release version, and re-sign locally.
+3. Create one DMG and SHA-256 file per architecture; verify each mounted image.
+4. Create a draft GitHub release, upload all four assets, then publish it.
+
+The workflow uses the repository `GITHUB_TOKEN`; no personal `GH_TOKEN` is needed.
+It does not depend on a release event starting another workflow. PR jobs have no
+repository write permission. Only version reservation and publication can write.
+Action versions are pinned to commit SHAs.
+
+## Version policy and recovery
+
+`VERSION` sets the initial release floor, **1.0.0**. Later versions derive from the
+highest existing `vMAJOR.MINOR.PATCH` tag and the merged PR’s branch:
+
+| Prefix | Bump |
+|---|---|
+| `major*`, `release*` | Major |
+| `minor*`, `feature*`, `feat*` | Minor |
+| Anything else (`fix/`, `patch/`, `docs/`, dependencies) | Patch |
+
+Direct main pushes and manual dispatch without a matching merged PR default to patch.
+Main protection is intended to prevent direct pushes. Never rename or move a release tag.
+A rerun at an already tagged commit reuses its version. Concurrent merges reserve tags
+with non-forced pushes and retry collisions; there is no shared pending-run queue that
+drops intermediate main commits. Version order follows successful reservation order.
+
+A packaging failure can leave a reserved tag without a published release. Fix a
+transient runner failure by rerunning that workflow; its tag and source commit stay
+fixed. Do not delete the tag just to reclaim a version. Published releases are not
+overwritten by reruns. Incomplete drafts may have their assets replaced before publishing.
+
+`APP_VERSION`, `APP_BUILD` and `BUILD_DIR` support isolated builds. Without overrides,
+`sh build.sh` uses `VERSION`, build number 1, and `build/`. Keep source-build and
+release-package versioning distinct: release packaging stamps the reserved version
+into both the bundle metadata and visible header.
+
+To build a local installer (use a new output folder if the name already exists):
+
+```sh
+BUILD_DIR=/tmp/monitor-release-build sh build.sh
+python3 scripts/package.py --app '/tmp/monitor-release-build/Disk Monitor.app' --version 1.0.0 --output dist
+```
+
+The package helper makes a copy before changing metadata. It never installs the app
+or modifies the input bundle. Checks include running `--self-test` inside the mounted
+read-only image. Updating the running local app remains a separate deliberate step.
+
+## Branch rules
+
+The intended rules live in `.github/main-ruleset.json`:
+
+- PR required; zero approving reviews for the current solo-maintainer workflow.
+- Verified signatures required for incoming commits.
+- All three checks above required from the GitHub Actions integration.
+- Branch must be up to date before merging; review conversations must be resolved.
+- No force-pushes, deletions, or administrator bypass list for `main`.
+
+**Activation status (2026-09-22): not active.** GitHub rejected access to rulesets
+because this private repository is under GitHub Free. GitHub Pro or higher is needed
+to enforce these rules while keeping it private. CI checks alone do not prevent an
+owner from bypassing the intended workflow. This file is a desired configuration,
+not proof of server-side enforcement.
+
+After the plan permits it and the required checks have passed:
+
+```sh
+python3 scripts/apply_main_rules.py --validated-ref feature/automatic-macos-releases
+```
+
+The helper checks the actual check names, integration and successful conclusions,
+then creates or updates only the ruleset named “Protect main” and reads it back.
+It never changes repository visibility, billing, unrelated rulesets, or credentials.
+
+Signed commits can be made locally using a registered signing key, or through
+GitHub’s signed web/GraphQL commit interface. Unsigned PR commits can block a merge
+even if GitHub would sign the final squash commit. See [GitHub’s signing rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
+
+## Apple signing is a separate follow-up
+
+Git commit signatures establish commit authorship; they do not sign the macOS app.
+Developer ID signing and Apple notarization need Apple Developer Program credentials.
+Before enabling them, import the certificate into a temporary CI keychain, sign
+nested executable code inside-out with hardened runtime, notarize the final package,
+staple its ticket, and verify it with Gatekeeper on a clean Mac. Never label an ad-hoc
+build notarized. No automatic notarization is configured in this workflow.
