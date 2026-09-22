@@ -20,7 +20,12 @@ new = legacy.with_name('bridging.modulemap')
 roots = [{'type': 'file', 'name': str(legacy), 'external-contents': str(root / 'empty.modulemap')}] if legacy.exists() and new.exists() else []
 (root / 'toolchain-overlay.json').write_text(json.dumps({'version': 0, 'roots': roots}))
 PYBUILD
-xcrun swiftc -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
+python3 scripts/sparkle.py "$build_dir"
+xcrun swiftc -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" scripts/key_public.swift -o "$build_dir/sparkle/key_public"
+mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
+cp "$build_dir/sparkle/LICENSE" "$app/Contents/Resources/SPARKLE-LICENSE"
+/usr/bin/ditto "$build_dir/sparkle/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
+xcrun swiftc -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift Updates.swift -F "$build_dir/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
 
 codesign --force --sign - "$app"
 codesign --verify --deep --strict "$app"

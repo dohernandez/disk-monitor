@@ -66,6 +66,12 @@ jobs:
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
           sh build.sh
+      - name: Verify update signatures and tamper rejection
+        env:
+          SPARKLE_TOOLS: ${{ runner.temp }}/build/sparkle
+        run: python3 -B scripts/test_signatures.py
+      - name: Check isolated updater startup
+        run: python3 -B scripts/check_updater.py "$RUNNER_TEMP/build/Disk Monitor.app"
       - name: Check packaged app
         run: python3 scripts/check_app.py "$RUNNER_TEMP/build/Disk Monitor.app"
 
@@ -117,6 +123,8 @@ jobs:
   package:
     name: Release installers
     needs: [build, version]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: release
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
@@ -142,6 +150,16 @@ jobs:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
           APP_BUILD: ${{ github.run_number }}
         run: python3 scripts/package.py --app "$RUNNER_TEMP/unpacked/Disk Monitor.app" --version "$RELEASE_VERSION" --build "$APP_BUILD"
+      - name: Prepare pinned signing tools
+        run: |
+          python3 scripts/sparkle.py "$RUNNER_TEMP/signing"
+          xcrun swiftc scripts/key_public.swift -o "$RUNNER_TEMP/signing/sparkle/key_public"
+      - name: Sign installer and update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          APP_BUILD: ${{ github.run_number }}
+        run: python3 scripts/sign_release.py --image "dist/Disk-Monitor-$RELEASE_VERSION-macOS-${{ matrix.arch }}.dmg" --version "$RELEASE_VERSION" --build "$APP_BUILD" --arch "${{ matrix.arch }}" --tools "$RUNNER_TEMP/signing/sparkle"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-${{ matrix.arch }}
@@ -152,7 +170,7 @@ jobs:
   publish:
     name: Publish complete release
     needs: [version, package]
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     permissions:
       contents: write
     steps:
@@ -164,8 +182,11 @@ jobs:
           pattern: installer-*
           merge-multiple: true
           path: dist
-      - name: Publish installers and checksums
+      - name: Prepare public signature verifier
+        run: xcrun swiftc scripts/key_public.swift -o "$RUNNER_TEMP/key_public"
+      - name: Publish verified installers and signed feeds
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          UPDATE_VERIFIER: ${{ runner.temp }}/key_public
         run: python3 scripts/publish_release.py

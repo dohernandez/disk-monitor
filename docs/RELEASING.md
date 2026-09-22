@@ -2,7 +2,8 @@
 
 Version **1.0.0** is the first stable version. Stable describes the accepted feature
 baseline; builds are still **ad-hoc signed, not Apple Developer ID-signed or notarized**.
-No signing identity or Apple credentials are stored in this repository.
+Only the public update key is stored in this repository; private signing seeds and
+Apple credentials are not.
 
 ## Install a release
 
@@ -38,17 +39,19 @@ Every PR runs:
 Token Monitor additionally runs its Python accounting/observer suite with the
 bundled interpreter and a collector smoke test against a temporary empty home/state.
 Neither installer verification nor CI installs an observer or reads real agent data.
-The disk self-tests use fixture directories; their model still reads local saved
-measurements if present, as documented in Development.
+Disk self-tests use temporary saved-state paths, including permission-migration fixtures.
 
 After a main build passes all checks:
 
 1. Reserve a semantic version tag at the exact tested commit.
 2. Download those tested app bundles, stamp their release version, and re-sign locally.
 3. Create one DMG and SHA-256 file per architecture; verify each mounted image.
-4. Create a draft GitHub release, upload all four assets, then publish it.
+4. Sign each final DMG and its architecture-specific appcast with Ed25519.
+5. Verify both feeds and installers against the committed public key, upload all
+   six assets to a draft, then publish it. Missing or invalid signatures stop publication.
 
-The workflow uses the repository `GITHUB_TOKEN`; no personal `GH_TOKEN` is needed.
+The workflow uses the repository `GITHUB_TOKEN`; no personal `GH_TOKEN` is needed. Signing uses `SPARKLE_PRIVATE_KEY` from the
+`release` environment, restricted to the `main` branch. PR jobs cannot access it.
 It does not depend on a release event starting another workflow. PR jobs have no
 repository write permission. Only version reservation and publication can write.
 Action versions are pinned to commit SHAs.
@@ -101,17 +104,11 @@ The intended rules live in `.github/main-ruleset.json`:
 - Branch must be up to date before merging; review conversations must be resolved.
 - No force-pushes, deletions, or administrator bypass list for `main`.
 
-**Activation status (2026-09-22): not active.** GitHub rejected access to rulesets
-because this private repository is under GitHub Free. GitHub Pro or higher is needed
-to enforce these rules while keeping it private. CI checks alone do not prevent an
-owner from bypassing the intended workflow. This file is a desired configuration,
-not proof of server-side enforcement.
-
-After the plan permits it and the required checks have passed:
-
-```sh
-python3 scripts/apply_main_rules.py --validated-ref feature/automatic-macos-releases
-```
+**Activation verified (2026-09-22): active.** This repository is public. GitHub
+Free enforces the rules above; secret scanning and push protection are also enabled.
+The server configuration was read back separately from the committed ruleset file.
+Use `scripts/apply_main_rules.py --validated-ref <branch>` only after the required
+checks pass when deliberately updating the rules.
 
 The helper checks the actual check names, integration and successful conclusions,
 then creates or updates only the ruleset named “Protect main” and reads it back.
@@ -129,3 +126,56 @@ Before enabling them, import the certificate into a temporary CI keychain, sign
 nested executable code inside-out with hardened runtime, notarize the final package,
 staple its ticket, and verify it with Gatekeeper on a clean Mac. Never label an ad-hoc
 build notarized. No automatic notarization is configured in this workflow.
+
+## Signed in-app updates
+
+Settings offers **Check for Updates**, daily automatic checks, and automatic
+background download/installation. Both automatic choices default off and save
+immediately through Sparkle preferences; they are separate from measurement timers.
+Automatic installation normally occurs on quit. A requested updater relaunch waits
+for the app's active scan/collector to finish. No login item is added.
+
+The first release containing this feature requires one manual installation: version
+1.0.0 does not contain an updater. Subsequent releases use Sparkle 2.10.0, pinned by
+URL and SHA-256 in `scripts/sparkle.py`. Framework licenses remain inside the bundle.
+The installer **and the appcast** are Ed25519-signed. `SUPublicEDKey` is embedded in
+the app; `SURequireSignedFeed` and `SUVerifyUpdateBeforeExtraction` require verification
+before trusting feed content or extracting an update. SHA-256 sidecars alone do not
+establish authenticity. These update signatures do not provide Apple notarization.
+
+The architecture-specific HTTPS feed is a GitHub Release asset:
+`releases/latest/download/appcast-arm64.xml` or `appcast-x86_64.xml`. Versioned DMG
+URLs are inside the signed feed. Checks disclose normal HTTP metadata (including IP
+address and app user agent) to GitHub, but no measurements, usage records or system
+profile. Profiling is disabled and the delegate's profile allowlist is empty.
+
+### Key custody and CI
+
+`scripts/update-config.json` contains only the repository and public key. Each app
+has a separate seed, stored locally in the login Keychain under Sparkle's account
+`dohernandez.disk-monitor`. An exported copy is installed as the `release` environment
+secret, never a repository file or PR secret. Exported temporary files are owner-only
+and removed after upload. Keep a separate secure backup before moving Macs or
+removing the Keychain item. Losing this key can require a manual reinstall; do not
+silently replace the embedded public key and assume existing users can update.
+
+Only trusted main release jobs receive the seed. `sign_release.py` verifies that
+its derived public key matches the app configuration before signing. The publication
+job has no private key: `verify_release.py` uses CryptoKit to verify feed bytes and
+DMG bytes using the committed public key. It also checks the expected version, URL,
+and file size. PR checks use random, disposable seeds to prove valid signatures pass
+and changed downloads, changed/unsigned feeds, and wrong keys fail.
+
+For local signature regression checks after a build:
+
+```sh
+SPARKLE_TOOLS=build/sparkle python3 -B scripts/test_signatures.py
+```
+
+`scripts/check_updater.py` starts the embedded updater in a temporary app identity,
+with automatic options disabled and no update UI. No test replaces or launches an installed app. Full interactive update/relaunch and
+Gatekeeper acceptance on a clean Mac remain manual acceptance checks. Verify these
+before claiming end-to-end installation acceptance. An older signed feed can be
+replayed to delay update discovery; installed build comparison prevents it being
+used to offer an older build as a newer one. Protect GitHub access and the signing
+key independently.

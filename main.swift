@@ -1,6 +1,40 @@
 import Cocoa
 import SwiftUI
 
+enum PrivateReadings {
+    static func protect(_ url: URL, directory: Bool) throws {
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | (directory ? O_DIRECTORY : 0))
+        guard fd >= 0 else {
+            if !directory && errno == ENOENT { return }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_uid == getuid(),
+              directory ? (info.st_mode & S_IFMT) == S_IFDIR : ((info.st_mode & S_IFMT) == S_IFREG && info.st_nlink == 1),
+              fchmod(fd, directory ? 0o700 : 0o600) == 0 else {
+            throw NSError(domain: "PrivateReadings", code: 1)
+        }
+    }
+    static func prepare(_ url: URL) throws {
+        let parent = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try protect(parent, directory: true)
+        try protect(url, directory: false)
+    }
+    static func write(_ data: Data, to url: URL) throws {
+        try prepare(url)
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".readings-" + UUID().uuidString)
+        let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close(); try? FileManager.default.removeItem(at: temporary) }
+        try handle.write(contentsOf: data)
+        try handle.synchronize()
+        guard rename(temporary.path, url.path) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    }
+}
+
 func launchDiagnostic(_ phase:String,_ item:NSStatusItem?=nil) {
     guard CommandLine.arguments.contains("--diagnostics") else {return}
     var fields:[String:Any] = ["phase":phase,"pid":ProcessInfo.processInfo.processIdentifier,"time":Date().description,"policy":NSApp.activationPolicy().rawValue]
@@ -102,7 +136,7 @@ final class Scanner {
         var environment=ProcessInfo.processInfo.environment;environment["LC_ALL"]="C";p.environment=environment
         let out = Pipe(); p.standardOutput = out
         let errURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        FileManager.default.createFile(atPath: errURL.path, contents: nil)
+        FileManager.default.createFile(atPath: errURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
         defer { try? FileManager.default.removeItem(at: errURL) }
         guard let err = try? FileHandle(forWritingTo: errURL) else { return ScanResult(values: [:], error: "Cannot create scan log") }
         defer { try? err.close() }; p.standardError = err
@@ -164,14 +198,15 @@ final class Model: ObservableObject {
         Root(path: home + "/.claude/projects", title: "Claude session history"),
         Root(path: home + "/Library/Containers/com.docker.docker/Data/vms", title: "Docker VM storage")
     ] }
-    var saveURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json") }
-    init(preferences: UserDefaults = .standard) {
+    let saveURL: URL
+    init(preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json")) {
+        self.saveURL = saveURL
         self.preferences = preferences
         let disk = preferences.object(forKey: "diskRefreshSeconds") as? Int ?? 30
         let folder = preferences.object(forKey: "folderRefreshSeconds") as? Int ?? 300
         diskInterval = (5...3600).contains(disk) ? disk : 30
         folderInterval = (60...86400).contains(folder) ? folder : 300
-        if let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; status = "Showing saved folder measurements" }
+        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; status = "Showing saved folder measurements" }
         lastMeasuredAt = readings.values.map(\.date).max()
         refreshCapacity()
         scheduleTimers()
@@ -315,8 +350,9 @@ final class Model: ObservableObject {
         else { expanded.insert(path); loadChildren(path) }
     }
     func save() {
-        try? FileManager.default.createDirectory(at: saveURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(Saved(readings: readings, extras: extras)) { try? data.write(to: saveURL, options: .atomic) }
+        do {
+            try PrivateReadings.write(JSONEncoder().encode(Saved(readings: readings, extras: extras)), to: saveURL)
+        } catch { status = "Could not save private folder measurements" }
     }
     func scan(_ roots: [Root]) {
         guard !scanning else { return }
@@ -543,6 +579,8 @@ struct RefreshSettings: View {
             }
             Text("Changes apply immediately and are remembered after restart. The next refresh uses your new interval; an active scan continues.").font(.system(size: 10)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
             Divider()
+            UpdateSettings()
+            Divider()
             VStack(alignment: .leading, spacing: 10) {
                 Text("Alert legend").font(.system(size: 13, weight: .semibold))
                 HStack(alignment: .top, spacing: 9) {
@@ -678,6 +716,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var localEventMonitor: Any?
     let statusBadge = StatusBadgeView(frame: .zero)
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppUpdates.shared.start { [weak self] in self?.model.scanning == true }
         launchDiagnostic("didFinish")
         DispatchQueue.main.asyncAfter(deadline:.now()+2) { launchDiagnostic("status",self.item) }
         NSApp.setActivationPolicy(.accessory)
@@ -762,6 +801,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationDidResignActive(_ notification: Notification) { popover.performClose(nil) }
     func applicationWillTerminate(_ notification: Notification) { stopDismissMonitors(); model.scanner.cancel() }
 }
+if CommandLine.arguments.contains("--updater-self-test") {
+    precondition(Bundle.main.bundleIdentifier?.hasPrefix("local.monitor.updater-test.") == true, "Use the isolated updater fixture")
+    _ = NSApplication.shared
+    AppUpdates.shared.start { false }
+    precondition(AppUpdates.shared.failure == nil, "Sparkle configuration must start successfully")
+    precondition(!AppUpdates.shared.checks && !AppUpdates.shared.downloads)
+    print("PASS: embedded Sparkle starts with automatic checks and downloads disabled")
+    exit(0)
+}
 if CommandLine.arguments.contains("--self-test") {
     let scanWarning=DiskAlert(id:"scan:test",critical:false,title:"Scan",detail:"Denied",path:nil,measurementIssue:true)
     let spaceWarning=diskSpaceAlert(free:200*gib,capacity:1000*gib)!
@@ -775,6 +823,20 @@ if CommandLine.arguments.contains("--self-test") {
     let fm = FileManager.default, root = fm.temporaryDirectory.appendingPathComponent("DiskMonitor-test-" + UUID().uuidString)
     try fm.createDirectory(at: root.appendingPathComponent("folder with spaces"), withIntermediateDirectories: true)
     try Data(repeating: 42, count: 1024 * 1024).write(to: root.appendingPathComponent("folder with spaces/sample"))
+    let privateURL = root.appendingPathComponent("private/readings.json")
+    try PrivateReadings.write(Data("keep".utf8), to: privateURL)
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: privateURL.deletingLastPathComponent().path)
+    try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: privateURL.path)
+    try PrivateReadings.prepare(privateURL)
+    precondition((try! fm.attributesOfItem(atPath: privateURL.path)[.posixPermissions] as? Int) == 0o600)
+    precondition((try! fm.attributesOfItem(atPath: privateURL.deletingLastPathComponent().path)[.posixPermissions] as? Int) == 0o700)
+    precondition(try! Data(contentsOf: privateURL) == Data("keep".utf8))
+    let outside = root.appendingPathComponent("outside.json")
+    try Data("outside".utf8).write(to: outside)
+    let link = privateURL.deletingLastPathComponent().appendingPathComponent("link.json")
+    try fm.createSymbolicLink(at: link, withDestinationURL: outside)
+    do { try PrivateReadings.write(Data("bad".utf8), to: link); preconditionFailure("Must reject links") } catch {}
+    precondition(try! Data(contentsOf: outside) == Data("outside".utf8))
     let scoped=scopedScanResult(values:["/fixture":10,"/fixture/good":5],root:"/fixture",detail:"du: /fixture/bad/file: Permission denied\ndu: /fixture/vanished: No such file or directory\n")
     precondition(scoped.error(for:"/fixture") != nil && scoped.error(for:"/fixture/bad") != nil)
     precondition(scoped.error(for:"/fixture/good")==nil && scoped.error(for:"/fixture/bad-other")==nil)
@@ -797,7 +859,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(result.values[root.appendingPathComponent("folder with spaces").path] != nil)
     precondition(scanner.scan(root.appendingPathComponent("missing").path).error != nil)
     scanner.cancel(); precondition(scanner.scan(root.path).values.isEmpty)
-    let model = Model()
+    let model = Model(saveURL: root.appendingPathComponent("state/readings.json"))
     model.toggle(root.path)
     precondition(model.loadingChildren.contains(root.path))
     model.toggle(root.path) // Collapse before the asynchronous directory read completes.
@@ -838,7 +900,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.scanState("/fixture/waiting") == .idle)
     let suite = "DiskMonitorTests." + UUID().uuidString
     let prefs = UserDefaults(suiteName: suite)!
-    let configured = Model(preferences: prefs)
+    let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"))
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     let oldDiskTimer = configured.timer!, oldFolderTimer = configured.folderTimer!
     precondition(configured.configureIntervals(diskSeconds: 45, folderMinutes: 7))
@@ -846,7 +908,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(configured.timer!.timeInterval == 45 && configured.folderTimer!.timeInterval == 420)
     precondition(!configured.configureIntervals(diskSeconds: 0, folderMinutes: 0))
     precondition(configured.diskInterval == 45 && configured.folderInterval == 420)
-    let restored = Model(preferences: UserDefaults(suiteName: suite)!)
+    let restored = Model(preferences: UserDefaults(suiteName: suite)!, saveURL: root.appendingPathComponent("state/readings.json"))
     precondition(restored.diskInterval == 45 && restored.folderInterval == 420)
     configured.timer?.invalidate(); configured.folderTimer?.invalidate()
     restored.timer?.invalidate(); restored.folderTimer?.invalidate()

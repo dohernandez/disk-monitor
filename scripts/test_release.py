@@ -72,7 +72,7 @@ class ReleaseTests(unittest.TestCase):
             before=Path.cwd()
             try:
                 os.chdir(directory);Path('dist').mkdir()
-                with patch.dict(os.environ,RELEASE_TAG='v1.0.0'), patch.object(publish_release.subprocess,'run') as gh:
+                with patch.object(publish_release,'verify_assets'), patch.dict(os.environ,RELEASE_TAG='v1.0.0'), patch.object(publish_release.subprocess,'run') as gh:
                     with self.assertRaises(FileNotFoundError):publish_release.publish()
                     gh.assert_not_called()
                     for arch in ('arm64','x86_64'):
@@ -96,14 +96,14 @@ class ReleaseTests(unittest.TestCase):
                     image.with_suffix('.dmg.sha256').write_text(hashlib.sha256(b'fixture').hexdigest()+'  '+image.name+'\n')
                 def result(args,**kwargs):
                     return subprocess.CompletedProcess(args,1 if args[1:3]==['release','view'] else 0,'','')
-                with patch.dict(os.environ,RELEASE_TAG='v1.0.0'), patch.object(publish_release.subprocess,'run',side_effect=result) as gh:
+                with patch.object(publish_release,'verify_assets'), patch.dict(os.environ,RELEASE_TAG='v1.0.0'), patch.object(publish_release.subprocess,'run',side_effect=result) as gh:
                     publish_release.publish()
                     commands=[c.args[0] for c in gh.call_args_list]
                     self.assertIn('--draft',commands[1])
                     self.assertEqual(commands[2][1:3],['release','upload'])
                     self.assertEqual(commands[3],['gh','release','edit','v1.0.0','--draft=false'])
                 published=subprocess.CompletedProcess([],0,'{"isDraft":false,"url":"https://example.invalid/release"}','')
-                with patch.dict(os.environ,RELEASE_TAG='v1.0.0'), patch.object(publish_release.subprocess,'run',return_value=published) as gh:
+                with patch.object(publish_release,'verify_assets'), patch.dict(os.environ,RELEASE_TAG='v1.0.0'), patch.object(publish_release.subprocess,'run',return_value=published) as gh:
                     publish_release.publish();self.assertEqual(gh.call_count,1)
             finally:os.chdir(before)
 

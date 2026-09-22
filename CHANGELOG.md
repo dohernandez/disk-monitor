@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add signed Sparkle updates, manual checking and optional automatic updates.
+- Enforce owner-only cache permissions while preserving saved data.
+
 ## 1.0.0
 
 First stable release of Disk Monitor.

@@ -14,6 +14,10 @@ def check(app):
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     assert info['CFBundleIdentifier'] == IDENTIFIER
     assert info['LSMinimumSystemVersion'] == '15.0'
+    assert info['SURequireSignedFeed'] is True and info['SUVerifyUpdateBeforeExtraction'] is True
+    assert info['SUEnableSystemProfiling'] is False
+    assert (app/'Contents/Frameworks/Sparkle.framework').is_dir()
+    assert (app/'Contents/Resources/SPARKLE-LICENSE').is_file()
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--self-test'], check=True, timeout=120)
     if BINARY == 'TokenMonitor':
