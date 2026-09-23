@@ -2,7 +2,7 @@
 
 **See where your disk space goes, straight from the macOS menu bar.**
 
-Disk Monitor shows free space, your five largest measured folders, and growth between
+Disk Monitor shows free space, your largest measured folders (five by default), and growth between
 scans in a compact native dashboard. Follow projects, worktrees, and shared development
 caches without leaving your current app.
 
@@ -26,7 +26,7 @@ caches without leaving your current app.
 ## Overview
 
 - **Free space at a glance.** A lightweight capacity check runs separately from folder scans.
-- **Find growing folders.** The top five ranks measured projects and caches; expand the tree to investigate.
+- **Find growing folders.** The configurable largest-folder list ranks measured projects and caches; expand the tree to investigate.
 - **See scan progress.** Active and queued folders have distinct indicators, with previous sizes kept visible.
 - **Choose your cadence.** Configure free-space and folder-scan intervals independently.
 - **Know when to look.** Menu bar badges distinguish low space, large growth, and incomplete measurements.
@@ -112,7 +112,7 @@ checks contact GitHub; no measurements or system profile are sent. There is no t
 `~/Library/Application Support/DiskMonitor/`.
 
 Folder sizes can overlap or share APFS storage: **do not add them together or treat
-them as guaranteed reclaimable space**. The top five covers tracked candidates, not
+them as guaranteed reclaimable space**. The largest-folder list covers tracked candidates, not
 the entire disk. Partial results show **≥**; failed scans preserve earlier complete
 readings. Protected folders can remain unreadable. Nix reclaimable space and
 Docker-internal accounting are not implemented.
@@ -155,3 +155,22 @@ not trigger the menu-bar ? badge. Mixed, unknown and other scan failures still w
 free-space and growth thresholds are unchanged. Classification uses all diagnostics
 before display truncation. Legacy partial readings require a fresh scan before
 suppressing their warning. No filesystem permissions are changed.
+
+## Folder settings
+
+Settings → Tracked folders configures the largest-folder count (1–50, default 5),
+multiple project roots with editable labels, detected default-cache toggles and
+custom cache roots. These controls save immediately, separately from refresh
+interval edits. Project labels save with Rename or Return. Remove stops tracking
+without deleting measurements or files. The top list ranks measured children across
+all project roots, worktree children, Library cache children and configured cache/extra
+roots, suppressing overlapping parent/child entries as before.
+
+Optional saved fields projects, customCaches and largestCount preserve old JSON
+compatibility. With projects absent, the old projectPath or legacy saved YeagerAI
+root remains active; an explicitly empty projects array means no project roots.
+Existing readings, extras, exclusions and intervals are preserved. Older app versions
+ignore the new fields and cannot reproduce multiple-root/count settings on rollback.
+Fixture checks cover migration, multiple roots, label/count persistence, boundaries,
+custom caches, duplicate prevention and ranking across roots. Native folder-picker
+and Rename/Remove click behavior still require manual acceptance.

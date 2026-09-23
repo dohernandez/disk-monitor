@@ -78,7 +78,7 @@ func sizeText(_ bytes: Int64) -> String {
 }
 struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil }
 struct Root: Codable, Identifiable { var path: String; var title: String; var id: String { path } }
-struct Saved: Codable { var readings: [String: Reading]; var extras: [Root]; var projectPath: String? = nil; var excludedPaths: [String]? = nil }
+struct Saved: Codable { var readings: [String: Reading]; var extras: [Root]; var projectPath: String? = nil; var excludedPaths: [String]? = nil; var projects: [Root]? = nil; var customCaches: [Root]? = nil; var largestCount: Int? = nil }
 struct DiskAlert: Identifiable {
     let id: String
     let critical: Bool
@@ -190,6 +190,9 @@ final class Model: ObservableObject {
     @Published var lastMeasuredAt: Date?
     let scanner = Scanner()
     let home: String
+    @Published var projects: [Root]?
+    @Published var customCaches: [Root] = []
+    @Published var largestCount = 5
     @Published var projectPath: String?
     @Published var excludedPaths: Set<String> = []
     var onStatus: (() -> Void)?
@@ -203,12 +206,13 @@ final class Model: ObservableObject {
         return Root(path: path, title: "Projects · " + URL(fileURLWithPath: path).lastPathComponent)
     }
     var projectRoots: [Root] {
-        (projectPath != nil || readings[project.path] != nil) && !excludedPaths.contains(project.path) ? [project] : []
+        if let projects = projects { return projects }
+        return (projectPath != nil || readings[project.path] != nil) && !excludedPaths.contains(project.path) ? [project] : []
     }
     var trackedRoots: [Root] { projectRoots + caches + extras }
     func isTracked(_ path: String) -> Bool { trackedRoots.contains { path == $0.path || path.hasPrefix($0.path + "/") } }
 
-    var caches: [Root] { [
+    var defaultCacheOptions: [Root] { [
         Root(path: home + "/Library/Caches", title: "Library caches"),
         Root(path: home + "/go/pkg/mod", title: "Go modules"),
         Root(path: home + "/.cargo", title: "Cargo"),
@@ -216,7 +220,11 @@ final class Model: ObservableObject {
         Root(path: home + "/.foundry/anvil/tmp", title: "Anvil temporary files"),
         Root(path: home + "/.claude/projects", title: "Claude session history"),
         Root(path: home + "/Library/Containers/com.docker.docker/Data/vms", title: "Docker VM storage")
-    ].filter { !excludedPaths.contains($0.path) && (FileManager.default.fileExists(atPath: $0.path) || readings[$0.path] != nil) && !projectRoots.map(\.path).contains($0.path) }
+    ].filter { FileManager.default.fileExists(atPath: $0.path) || readings[$0.path] != nil }
+    }
+    var caches: [Root] {
+        let custom = Set(customCaches.map(\.path))
+        return defaultCacheOptions.filter { !excludedPaths.contains($0.path) && !projectRoots.map(\.path).contains($0.path) && !custom.contains($0.path) } + customCaches
     }
     let saveURL: URL
     init(home: String = FileManager.default.homeDirectoryForCurrentUser.path, preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json")) {
@@ -227,7 +235,7 @@ final class Model: ObservableObject {
         let folder = preferences.object(forKey: "folderRefreshSeconds") as? Int ?? 300
         diskInterval = (5...3600).contains(disk) ? disk : 30
         folderInterval = (60...86400).contains(folder) ? folder : 300
-        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; projectPath = saved.projectPath; excludedPaths = Set(saved.excludedPaths ?? []); status = "Showing saved folder measurements" }
+        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; projectPath = saved.projectPath; excludedPaths = Set(saved.excludedPaths ?? []); projects = saved.projects; customCaches = saved.customCaches ?? []; largestCount = (1...50).contains(saved.largestCount ?? 5) ? (saved.largestCount ?? 5) : 5; status = "Showing saved folder measurements" }
         lastMeasuredAt = readings.values.map(\.date).max()
         refreshCapacity()
         scheduleTimers()
@@ -337,11 +345,12 @@ final class Model: ObservableObject {
         }
     }
     var largestFolders: [Root] {
-        let worktrees = project.path + "/worktree"
+        let projectPaths = projectRoots.map(\.path)
         let library = home + "/Library/Caches"
         var candidates = Set(readings.keys.filter {
             let parent = URL(fileURLWithPath: $0).deletingLastPathComponent().path
-            return (parent == project.path && $0 != worktrees) || parent == worktrees || parent == library
+            let candidate = $0
+            return projectPaths.contains { (parent == $0 && candidate != $0 + "/worktree") || parent == $0 + "/worktree" } || parent == library
         })
         for root in caches where root.path != library { candidates.insert(root.path) }
         for root in extras { candidates.insert(root.path) }
@@ -353,7 +362,7 @@ final class Model: ObservableObject {
         for path in sorted {
             if selected.contains(where: { path.hasPrefix($0 + "/") || $0.hasPrefix(path + "/") }) { continue }
             selected.append(path)
-            if selected.count == 5 { break }
+            if selected.count == largestCount { break }
         }
         return selected.map { path in
             let title = caches.first(where: { $0.path == path })?.title ?? URL(fileURLWithPath: path).lastPathComponent
@@ -378,7 +387,7 @@ final class Model: ObservableObject {
     }
     func save() {
         do {
-            try PrivateReadings.write(JSONEncoder().encode(Saved(readings: readings, extras: extras, projectPath: projectPath, excludedPaths: Array(excludedPaths).sorted())), to: saveURL)
+            try PrivateReadings.write(JSONEncoder().encode(Saved(readings: readings, extras: extras, projectPath: projectPath, excludedPaths: Array(excludedPaths).sorted(), projects: projects, customCaches: customCaches, largestCount: largestCount)), to: saveURL)
         } catch { status = "Could not save private folder measurements" }
     }
     func scan(_ roots: [Root]) {
@@ -425,6 +434,8 @@ final class Model: ObservableObject {
         }
     }
     func stopTracking(_ path: String) {
+        projects = projectRoots.filter { $0.path != path }
+        customCaches.removeAll { $0.path == path }
         excludedPaths.insert(path)
         extras.removeAll { $0.path == path }
         if project.path == path { projectPath = nil }
@@ -433,9 +444,36 @@ final class Model: ObservableObject {
     func setProjects(_ path: String) {
         if project.path != path { excludedPaths.insert(project.path) }
         projectPath = path
+        projects = [Root(path: path, title: "Projects · " + URL(fileURLWithPath: path).lastPathComponent)]
+        customCaches.removeAll { $0.path == path }
         excludedPaths.remove(path)
         extras.removeAll { $0.path == path }
         save(); onStatus?()
+    }
+    func configureLargestCount(_ count: Int) {
+        guard (1...50).contains(count) else { return }
+        largestCount = count; save()
+    }
+    func addRoot(_ url: URL, asProject: Bool) {
+        let current = projectRoots
+        let root = Root(path: url.path, title: url.lastPathComponent)
+        projects = current.filter { $0.path != url.path }
+        customCaches.removeAll { $0.path == url.path }
+        extras.removeAll { $0.path == url.path }
+        excludedPaths.insert(url.path)
+        if asProject { projects!.append(root) } else { customCaches.append(root) }
+        save(); onStatus?()
+    }
+    func renameProject(_ path: String, title: String) {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        projects = projectRoots.map { $0.path == path ? Root(path: path, title: name) : $0 }
+        save()
+    }
+    func chooseRoots(asProject: Bool) {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
+        panel.prompt = asProject ? "Add project folders" : "Add cache folders"
+        if panel.runModal() == .OK { for url in panel.urls { addRoot(url, asProject: asProject) } }
     }
     func chooseProjects() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
@@ -532,7 +570,7 @@ struct LargestFolders: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Label("5 LARGEST FOLDERS", systemImage: "chart.bar.xaxis").font(.system(size: 10, weight: .semibold))
+                Label("\(model.largestCount) LARGEST FOLDERS", systemImage: "chart.bar.xaxis").font(.system(size: 10, weight: .semibold))
                 Spacer()
                 Text("From last scans").font(.system(size: 10)).foregroundStyle(Palette.secondary)
             }
@@ -595,6 +633,47 @@ struct AlertPanel: View {
         }
     }
 }
+struct ProjectSettingRow: View {
+    @ObservedObject var model: Model
+    let root: Root
+    @State private var name = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                TextField("Folder label", text: $name).textFieldStyle(.roundedBorder)
+                    .onSubmit { model.renameProject(root.path, title: name) }
+                Button("Rename") { model.renameProject(root.path, title: name) }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Remove") { model.stopTracking(root.path) }
+            }
+            Text(root.path).font(.caption).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }.onAppear { name = root.title }
+    }
+}
+struct FolderSettings: View {
+    @ObservedObject var model: Model
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Tracked folders").font(.headline)
+            Stepper("Largest folders: \(model.largestCount)", value: Binding(get: {model.largestCount}, set: {model.configureLargestCount($0)}), in: 1...50)
+            Text("Folder settings save immediately. Removing a folder stops tracking; it does not delete files or saved measurements.").font(.caption).foregroundStyle(Palette.secondary)
+            Text("Project folders").fontWeight(.semibold)
+            ForEach(model.projectRoots) { root in ProjectSettingRow(model: model, root: root) }
+            Button("Add project folders…") { model.chooseRoots(asProject: true) }
+            Divider()
+            Text("Caches & tools").fontWeight(.semibold)
+            ForEach(model.defaultCacheOptions.filter { candidate in !model.projectRoots.contains { $0.path == candidate.path } && !model.customCaches.contains { $0.path == candidate.path } }) { root in
+                Toggle(root.title, isOn: Binding(get: {!model.excludedPaths.contains(root.path)}, set: {enabled in
+                    if enabled {model.excludedPaths.remove(root.path);model.extras.removeAll {$0.path == root.path};model.save();model.onStatus?()}
+                    else {model.stopTracking(root.path)}
+                }))
+            }
+            ForEach(model.customCaches) { root in
+                HStack { Text(root.title); Spacer(); Button("Remove") {model.stopTracking(root.path)} }.help(root.path)
+            }
+            Button("Add cache folders…") {model.chooseRoots(asProject: false)}
+        }.font(.system(size: 11))
+    }
+}
 struct RefreshSettings: View {
     @ObservedObject var model: Model
     let close: () -> Void
@@ -609,7 +688,9 @@ struct RefreshSettings: View {
                 Spacer()
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("Free disk space").font(.system(size: 13, weight: .medium))
+                FolderSettings(model: model)
+            Divider()
+            Text("Free disk space").font(.system(size: 13, weight: .medium))
                 HStack {
                     Text("Check every")
                     TextField("30", text: $diskSeconds).textFieldStyle(.roundedBorder).frame(width: 80).accessibilityLabel("Free space interval in seconds")
@@ -712,7 +793,7 @@ struct Dashboard: View {
                     Divider().padding(.vertical, 3)
                     HStack { Text("FOLDERS").fontWeight(.semibold); Spacer(); Text("Size / change") }.font(.system(size: 10)).foregroundStyle(Palette.secondary)
                     ForEach(model.projectRoots) { root in FolderRow(model: model, root: root) }
-                    Button(model.projectRoots.isEmpty ? "Choose Projects folder…" : "Change Projects folder…") { model.chooseProjects() }
+                    Button("Add project folders…") { model.chooseRoots(asProject: true) }
                         .buttonStyle(.plain).foregroundStyle(Palette.accent).font(.system(size: 11))
                     Text("SHARED CACHES & TOOLS").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
                     VStack(spacing: 1) { ForEach(model.caches) { root in FolderRow(model: model, root: root) } }
@@ -952,6 +1033,36 @@ if CommandLine.arguments.contains("--self-test") {
     migrated.stopTracking(selected.path)
     precondition(migrated.projectRoots.isEmpty, "Stopping a replacement must not resurrect legacy Projects")
     for fixtureModel in [portable, reopened, migrated] { fixtureModel.timer?.invalidate(); fixtureModel.folderTimer?.invalidate() }
+    let multiURL = root.appendingPathComponent("multi-state/readings.json")
+    let multi = Model(home: portableHome.path, saveURL: multiURL)
+    let first = portableHome.appendingPathComponent("first")
+    let second = portableHome.appendingPathComponent("second")
+    multi.addRoot(first, asProject: true); multi.addRoot(second, asProject: true)
+    multi.addRoot(first, asProject: true)
+    precondition(multi.projectRoots.count == 2)
+    multi.renameProject(first.path, title: "Work repositories")
+    for i in 0..<8 {
+        let parent = i < 4 ? first.path : second.path
+        multi.readings[parent + "/repo-" + String(i)] = Reading(bytes: Int64(i+1)*gib, previous: nil, date: Date())
+    }
+    precondition(multi.largestFolders.count == 5)
+    multi.configureLargestCount(8)
+    precondition(multi.largestFolders.count == 8 && multi.largestFolders.first?.path == second.path + "/repo-7")
+    multi.configureLargestCount(0);precondition(multi.largestCount == 8)
+    multi.configureLargestCount(51);precondition(multi.largestCount == 8)
+    let customCache = portableHome.appendingPathComponent("custom-cache")
+    multi.addRoot(customCache, asProject: false)
+    multi.readings[customCache.path] = Reading(bytes: 20*gib, previous: nil, date: Date())
+    multi.save()
+    let multiReloaded = Model(home: portableHome.path, saveURL: multiURL)
+    precondition(multiReloaded.largestCount == 8 && multiReloaded.projectRoots.count == 2)
+    precondition(multiReloaded.projectRoots.contains { $0.title == "Work repositories" })
+    precondition(multiReloaded.caches.contains { $0.path == customCache.path })
+    precondition(multiReloaded.largestFolders.first?.path == customCache.path)
+    multiReloaded.stopTracking(second.path)
+    precondition(!multiReloaded.largestFolders.contains { $0.path.hasPrefix(second.path + "/") })
+    precondition(multiReloaded.readings[second.path + "/repo-7"] != nil)
+    multi.timer?.invalidate();multi.folderTimer?.invalidate();multiReloaded.timer?.invalidate();multiReloaded.folderTimer?.invalidate()
     let scanner = Scanner(), result = scanner.scan(root.path)
     precondition(result.error == nil && (result.values[root.path] ?? 0) >= 1024 * 1024)
     precondition(result.values[root.appendingPathComponent("folder with spaces").path] != nil)

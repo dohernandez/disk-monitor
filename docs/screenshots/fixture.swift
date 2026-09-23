@@ -9,7 +9,7 @@ let application = PreviewApplication.shared
 application.setActivationPolicy(.prohibited)
 application.appearance = NSAppearance(named: .darkAqua)
 let preferences = UserDefaults(suiteName: "MonitorReadme." + UUID().uuidString)!
-let model = Model(preferences: preferences)
+let model = Model(home: "/Users/example", preferences: preferences)
 let now = Date()
 model.free = 342 * gib; model.capacity = 926 * gib
 model.status = "Showing saved folder measurements"; model.lastMeasuredAt = now
