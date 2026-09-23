@@ -93,10 +93,24 @@ struct DiskAlert: Identifiable {
 func diskBadgeLevel(_ alerts:[DiskAlert])->Int {alerts.map(\.badgeLevel).max() ?? 0}
 
 let gib: Int64 = 1_073_741_824
-func diskSpaceAlert(free: Int64, capacity: Int64) -> DiskAlert? {
+struct SpaceThresholds {
+    var critical = 10
+    var warning = 20
+    static func valid(critical: Int, warning: Int) -> Bool { critical >= 1 && critical < warning && warning <= 100 }
+    func bytes(_ percent: Int, capacity: Int64) -> Int64 {
+        let total = max(0, capacity)
+        return (total / 100) * Int64(percent) + (total % 100) * Int64(percent) / 100
+    }
+    func label(_ percent: Int, capacity: Int64) -> String {
+        capacity > 0 ? "\(percent)% · \(sizeText(bytes(percent, capacity: capacity)))" : "\(percent)% · capacity unavailable"
+    }
+}
+func diskSpaceAlert(free: Int64, capacity: Int64, thresholds: SpaceThresholds = SpaceThresholds()) -> DiskAlert? {
     guard capacity > 0 else { return DiskAlert(id: "space-unknown", critical: false, title: "Disk space unavailable", detail: "The latest free-space check failed. Try refreshing.", path: nil, measurementIssue: true) }
-    guard free < 300 * gib else { return nil }
-    return DiskAlert(id: "space", critical: free < 125 * gib, title: free < 125 * gib ? "Critically low disk space" : "Disk space running low", detail: "\(sizeText(free)) free · warning below 300 GiB, critical below 125 GiB.", path: nil)
+    let percent = Double(free) / Double(capacity) * 100
+    guard percent < Double(thresholds.warning) else { return nil }
+    let critical = percent < Double(thresholds.critical)
+    return DiskAlert(id: "space", critical: critical, title: critical ? "Critically low disk space" : "Disk space running low", detail: "\(sizeText(free)) free · warning below \(thresholds.label(thresholds.warning, capacity: capacity)), critical below \(thresholds.label(thresholds.critical, capacity: capacity)).", path: nil)
 }
 enum FolderScanState { case idle, scanning, queued }
 func isPermissionDiagnostic(_ text: String) -> Bool {
@@ -199,6 +213,7 @@ final class Model: ObservableObject {
     var timer: Timer?
     var folderTimer: Timer?
     let preferences: UserDefaults
+    @Published private(set) var spaceThresholds = SpaceThresholds()
     @Published private(set) var diskInterval = 30
     @Published private(set) var folderInterval = 300
     var project: Root {
@@ -231,6 +246,9 @@ final class Model: ObservableObject {
         self.home = home
         self.saveURL = saveURL
         self.preferences = preferences
+        let critical = preferences.object(forKey: "criticalFreePercent") as? Int ?? 10
+        let warning = preferences.object(forKey: "warningFreePercent") as? Int ?? 20
+        if SpaceThresholds.valid(critical: critical, warning: warning) { spaceThresholds = SpaceThresholds(critical: critical, warning: warning) }
         let disk = preferences.object(forKey: "diskRefreshSeconds") as? Int ?? 30
         let folder = preferences.object(forKey: "folderRefreshSeconds") as? Int ?? 300
         diskInterval = (5...3600).contains(disk) ? disk : 30
@@ -253,6 +271,14 @@ final class Model: ObservableObject {
         preferences.set(diskInterval, forKey: "diskRefreshSeconds")
         preferences.set(folderInterval, forKey: "folderRefreshSeconds")
         scheduleTimers()
+        return true
+    }
+    @discardableResult func configureSpaceThresholds(critical: Int, warning: Int) -> Bool {
+        guard SpaceThresholds.valid(critical: critical, warning: warning) else { return false }
+        spaceThresholds = SpaceThresholds(critical: critical, warning: warning)
+        preferences.set(critical, forKey: "criticalFreePercent")
+        preferences.set(warning, forKey: "warningFreePercent")
+        onStatus?()
         return true
     }
     func scanAllFolders() {
@@ -295,7 +321,7 @@ final class Model: ObservableObject {
     }
     var alerts: [DiskAlert] {
         var result: [DiskAlert] = []
-        if let alert = diskSpaceAlert(free: free, capacity: capacity) { result.append(alert) }
+        if let alert = diskSpaceAlert(free: free, capacity: capacity, thresholds: spaceThresholds) { result.append(alert) }
         let roots = trackedRoots
         for root in roots {
             let error = errors[root.path]
@@ -679,6 +705,9 @@ struct RefreshSettings: View {
     let close: () -> Void
     @State private var diskSeconds = ""
     @State private var folderMinutes = ""
+    @State private var criticalPercent = ""
+    @State private var warningPercent = ""
+    @State private var thresholdValidation: String?
     @State private var validation: String?
     var body: some View {
         ScrollView {
@@ -722,14 +751,41 @@ struct RefreshSettings: View {
             UpdateSettings()
             Divider()
             VStack(alignment: .leading, spacing: 10) {
+                Text("Free-space alerts").font(.system(size: 13, weight: .semibold))
+                HStack {
+                    Text("Red below")
+                    TextField("10", text: $criticalPercent).textFieldStyle(.roundedBorder).frame(width: 60).accessibilityLabel("Critical free-space percentage")
+                    Text("% free")
+                    if let value = Int(criticalPercent), (1...100).contains(value) {
+                        Text(model.spaceThresholds.label(value, capacity: model.capacity)).foregroundStyle(Palette.secondary)
+                    }
+                }
+                HStack {
+                    Text("Orange below")
+                    TextField("20", text: $warningPercent).textFieldStyle(.roundedBorder).frame(width: 60).accessibilityLabel("Warning free-space percentage")
+                    Text("% free")
+                    if let value = Int(warningPercent), (1...100).contains(value) {
+                        Text(model.spaceThresholds.label(value, capacity: model.capacity)).foregroundStyle(Palette.secondary)
+                    }
+                }
+                Text("Whole percentages from 1 to 100. Red must be lower than orange. Amounts use the monitored volume’s capacity.").foregroundStyle(Palette.secondary)
+                if let error = thresholdValidation { Text(error).foregroundStyle(Palette.critical) }
+                Button("Save alert thresholds") {
+                    guard let critical = Int(criticalPercent.trimmingCharacters(in: .whitespaces)), let warning = Int(warningPercent.trimmingCharacters(in: .whitespaces)), model.configureSpaceThresholds(critical: critical, warning: warning) else {
+                        thresholdValidation = "Enter whole percentages: 1 ≤ red < orange ≤ 100."; return
+                    }
+                    thresholdValidation = nil
+                }.buttonStyle(.borderedProminent).tint(Palette.button).foregroundStyle(.white)
+                Text("Saved thresholds apply immediately and are remembered after restart.").foregroundStyle(Palette.secondary)
+                Divider()
                 Text("Alert legend").font(.system(size: 13, weight: .semibold))
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Palette.critical).frame(width: 18)
-                    Text("Red ! · Less than 125 GiB free.")
+                    Text("Red ! · Less than \(model.spaceThresholds.label(model.spaceThresholds.critical, capacity: model.capacity)) free.")
                 }
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Palette.warning).frame(width: 18)
-                    Text("Orange ! · Less than 300 GiB free, or folder growth of 10 GiB or more between scans.")
+                    Text("Orange ! · Less than \(model.spaceThresholds.label(model.spaceThresholds.warning, capacity: model.capacity)) free, or folder growth of 10 GiB or more between scans.")
                 }
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "questionmark.circle.fill").foregroundStyle(Palette.uncertainty).frame(width: 18)
@@ -743,7 +799,7 @@ struct RefreshSettings: View {
             }.font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
         }.padding(20).frame(maxWidth: .infinity, alignment: .topLeading)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { diskSeconds = String(model.diskInterval); folderMinutes = String(model.folderInterval / 60) }
+        .onAppear { diskSeconds = String(model.diskInterval); folderMinutes = String(model.folderInterval / 60); criticalPercent = String(model.spaceThresholds.critical); warningPercent = String(model.spaceThresholds.warning) }
     }
 }
 struct Dashboard: View {
@@ -954,8 +1010,8 @@ if CommandLine.arguments.contains("--updater-self-test") {
 }
 if CommandLine.arguments.contains("--self-test") {
     let scanWarning=DiskAlert(id:"scan:test",critical:false,title:"Scan",detail:"Denied",path:nil,measurementIssue:true)
-    let spaceWarning=diskSpaceAlert(free:200*gib,capacity:1000*gib)!
-    let criticalWarning=diskSpaceAlert(free:100*gib,capacity:1000*gib)!
+    let spaceWarning=diskSpaceAlert(free:150*gib,capacity:1000*gib)!
+    let criticalWarning=diskSpaceAlert(free:90*gib,capacity:1000*gib)!
     let growthWarning=DiskAlert(id:"growth:test",critical:false,title:"Growth",detail:"",path:nil)
     precondition(diskBadgeLevel([])==0 && diskBadgeLevel([scanWarning])==1)
     precondition(diskBadgeLevel([scanWarning,spaceWarning])==2)
@@ -1081,10 +1137,10 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.expanded.contains(root.path) && !model.loadingChildren.contains(root.path), "Reopen must use cached directory entries")
     model.toggle(root.path)
     precondition(!model.expanded.contains(root.path))
-    precondition(diskSpaceAlert(free: 300 * gib, capacity: 1000 * gib) == nil)
-    precondition(diskSpaceAlert(free: 299 * gib, capacity: 1000 * gib)?.critical == false)
-    precondition(diskSpaceAlert(free: 125 * gib, capacity: 1000 * gib)?.critical == false)
-    precondition(diskSpaceAlert(free: 124 * gib, capacity: 1000 * gib)?.critical == true)
+    precondition(diskSpaceAlert(free: 200 * gib, capacity: 1000 * gib) == nil)
+    precondition(diskSpaceAlert(free: 199 * gib, capacity: 1000 * gib)?.critical == false)
+    precondition(diskSpaceAlert(free: 100 * gib, capacity: 1000 * gib)?.critical == false)
+    precondition(diskSpaceAlert(free: 99 * gib, capacity: 1000 * gib)?.critical == true)
     precondition(diskSpaceAlert(free: 0, capacity: 0)?.id == "space-unknown")
     model.readings = [:]; model.errors = [:]; model.free = 400 * gib; model.capacity = 1000 * gib
     precondition(model.alerts.isEmpty)
@@ -1101,7 +1157,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.alerts.count == 1, "Fresh unexpected error overrides saved protection")
     model.protectedPaths.insert(model.project.path)
     precondition(model.alerts.isEmpty)
-    model.free = 200 * gib
+    model.free = 150 * gib
     precondition(diskBadgeLevel(model.alerts) == 2, "Protected contents must not hide low space")
     model.free = 400 * gib
     model.protectedPaths = []
@@ -1123,6 +1179,19 @@ if CommandLine.arguments.contains("--self-test") {
     let prefs = UserDefaults(suiteName: suite)!
     let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"))
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
+    precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)
+    precondition(configured.configureSpaceThresholds(critical: 15, warning: 30))
+    for (critical, warning) in [(0,20), (20,20), (30,20), (10,101), (-1,20)] {
+        precondition(!configured.configureSpaceThresholds(critical: critical, warning: warning))
+    }
+    precondition(configured.spaceThresholds.critical == 15 && configured.spaceThresholds.warning == 30)
+    for capacity: Int64 in [1000, 1000000, 1000 * gib] {
+        precondition(diskSpaceAlert(free: capacity * 30 / 100, capacity: capacity, thresholds: configured.spaceThresholds) == nil)
+        precondition(diskSpaceAlert(free: capacity * 15 / 100, capacity: capacity, thresholds: configured.spaceThresholds)?.critical == false)
+        precondition(diskSpaceAlert(free: capacity * 14 / 100, capacity: capacity, thresholds: configured.spaceThresholds)?.critical == true)
+    }
+    precondition(SpaceThresholds().bytes(100, capacity: Int64.max) == Int64.max)
+    precondition(SpaceThresholds().label(10, capacity: 0).contains("unavailable"))
     let oldDiskTimer = configured.timer!, oldFolderTimer = configured.folderTimer!
     precondition(configured.configureIntervals(diskSeconds: 45, folderMinutes: 7))
     precondition(!oldDiskTimer.isValid && !oldFolderTimer.isValid)
@@ -1131,6 +1200,11 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(configured.diskInterval == 45 && configured.folderInterval == 420)
     let restored = Model(preferences: UserDefaults(suiteName: suite)!, saveURL: root.appendingPathComponent("state/readings.json"))
     precondition(restored.diskInterval == 45 && restored.folderInterval == 420)
+    precondition(restored.spaceThresholds.critical == 15 && restored.spaceThresholds.warning == 30)
+    prefs.set(90, forKey: "criticalFreePercent"); prefs.set(20, forKey: "warningFreePercent")
+    let invalidThresholds = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"))
+    precondition(invalidThresholds.spaceThresholds.critical == 10 && invalidThresholds.spaceThresholds.warning == 20)
+    invalidThresholds.timer?.invalidate(); invalidThresholds.folderTimer?.invalidate()
     configured.timer?.invalidate(); configured.folderTimer?.invalidate()
     restored.timer?.invalidate(); restored.folderTimer?.invalidate()
     prefs.removePersistentDomain(forName: suite)

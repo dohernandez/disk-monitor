@@ -26,3 +26,5 @@ These previews check static presentation, not popup interactions or menu bar beh
 The renderer also compiles `Updates.swift`. Build first, or set `SPARKLE_TOOLS` to
 the built `sparkle` directory. Rendering never starts the updater; its manual check
 button is disabled and its version label says Preview in documentation images.
+
+The Settings preview uses a taller canvas to show controls normally reached by scrolling.

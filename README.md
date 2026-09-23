@@ -97,8 +97,8 @@ See the [usage guide](docs/USAGE.md) for exact paths and scan behavior.
 
 | Badge | Meaning |
 |---|---|
-| 🔴 Red ! | Less than **125 GiB** free |
-| 🟠 Orange ! | Less than **300 GiB** free, or growth of **10 GiB or more** between comparable scans |
+| 🔴 Red ! | Less than **10% (configurable)** free |
+| 🟠 Orange ! | Less than **20% (configurable)** free, or growth of **10 GiB or more** between comparable scans |
 | 🟡 Yellow ? | Incomplete or failed tracked-root measurement, or unavailable free-space reading |
 | No badge | No active alert in the available readings |
 
