@@ -203,3 +203,15 @@ ignore the new fields and cannot reproduce multiple-root/count settings on rollb
 Fixture checks cover migration, multiple roots, label/count persistence, boundaries,
 custom caches, duplicate prevention and ranking across roots. Native folder-picker
 and Rename/Remove click behavior still require manual acceptance.
+
+## Percentage free-space alerts
+
+SpaceThresholds defaults to 10% critical and 20% warning of the monitored home
+volume's capacity. Whole-number settings require 1 ≤ critical < warning ≤ 100.
+UserDefaults keys criticalFreePercent and warningFreePercent persist the pair;
+invalid saved pairs fall back together to defaults. Existing installations adopt
+these defaults instead of the old fixed-byte thresholds. Readings and intervals
+are unchanged. Save alert thresholds applies immediately, including the menu badge.
+The settings preview and saved legend show equivalent binary-formatted storage;
+unknown capacity shows unavailable, never a fabricated zero threshold. Folder
+growth remains 10 GiB and measurement-warning priority is unchanged.

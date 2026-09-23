@@ -54,7 +54,7 @@ check below. For a docs-only edit, verify links and source agreement; no rebuild
 - Changing intervals replaces both timers; it neither stops nor duplicates a scan.
 - Free-space polling alone does not change folder readings. Opening the popup does
   not start a folder scan. Automatic folder ticks skip an existing scan.
-- Legend and actual conditions agree: red <125 GiB; orange <300 GiB or growth >=10 GiB; yellow ? for
+- Legend and actual conditions agree: red <10% (configurable); orange <20% (configurable) or growth >=10 GiB; yellow ? for
   incomplete/failed measurements. Red > orange > yellow; no badge means
   no active alert, not guaranteed complete coverage.
 - A successful comparable rescan updates growth; low-space alerts update from capacity

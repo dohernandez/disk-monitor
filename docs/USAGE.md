@@ -41,13 +41,13 @@ Top-five rankings and alerts use cached readings and do not trigger extra scans.
 
 | Badge | Meaning |
 |---|---|
-| Red | Less than **125 GiB** free |
-| Orange ! | Less than **300 GiB** free, or folder growth of **10 GiB or more** between comparable scans |
+| Red | Less than **10% (configurable)** free |
+| Orange ! | Less than **20% (configurable)** free, or folder growth of **10 GiB or more** between comparable scans |
 | Yellow ? | Incomplete/failed tracked-root measurement or unavailable free-space reading |
 | No badge | No active alerts in the available readings |
 
-Red takes priority over orange, then yellow. Failed free-space queries show yellow ?. At exactly 125 GiB the
-space warning is orange; at exactly 300 GiB there is no space warning. Click the
+Red takes priority over orange, then yellow. Failed free-space queries show yellow ?. At exactly the critical threshold the
+space warning is orange; at exactly the warning threshold there is no space warning. Click the
 icon for the reasons. These are visual alerts, not macOS notification banners.
 Cancellation alone does not raise an alert. Growth changes only after folder scans;
 it compares the latest comparable measurements, not a fixed time window.
@@ -159,3 +159,10 @@ and Rename/Remove click behavior still require manual acceptance.
 
 In Settings, Free disk space and Folder sizes stay together at the top, followed
 by their Save settings button. Tracked folders appears below these refresh controls.
+
+Settings → Free-space alerts accepts whole percentages with 1 ≤ red < orange ≤ 100.
+Defaults are 10% and 20%. Save alert thresholds applies both immediately and
+persists them across restarts; Back discards unsaved threshold edits. The preview
+and legend show each percentage’s equivalent storage using the monitored volume.
+Upgrading replaces the old fixed 125/300 GiB limits with these percentage defaults.
+Folder growth remains an independent 10 GiB threshold.

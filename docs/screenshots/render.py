@@ -18,6 +18,8 @@ if APP == "disk-monitor":
     start = source.index('        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL)')
     end = source.index('    func scheduleTimers()', start)
     source = source[:start] + '    }\n' + source[end:]
+    # Expand only the documentation Settings canvas to show scrollable controls.
+    source = source.replace(".frame(width: 440, height: 690)", ".frame(width: 440, height: CommandLine.arguments.contains(\"settings\") ? 1600 : 690)")
     # Disable live saved-state loading, capacity queries and timers in the copy.
     source = source.replace('@State private var showingSettings = false',
         '@State private var showingSettings = CommandLine.arguments.contains("settings")')

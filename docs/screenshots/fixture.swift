@@ -25,7 +25,7 @@ let sizes: [(String, Int64)] = [
 for (path, size) in sizes {model.readings[path] = Reading(bytes: size*gib, previous: size*gib - 104_857_600, date: now)}
 
 let view = NSHostingView(rootView: Dashboard(model: model).environment(\.controlActiveState, .active))
-view.frame = NSRect(x: 0, y: 0, width: 440, height: 690)
+view.frame = NSRect(x: 0, y: 0, width: 440, height: CommandLine.arguments.contains("settings") ? 1600 : 690)
 let window = PreviewWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
 window.contentView = view
 window.appearance = NSAppearance(named: .darkAqua)

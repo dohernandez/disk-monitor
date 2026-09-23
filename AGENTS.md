@@ -47,7 +47,7 @@ implementation truth; document disagreements rather than silently broadening sco
 8. **Accepted design.** Soft charcoal popup, muted text/accent colors, teal header.
    Do not restore the bright white or washed-out translucent background. Settings
    has Quit in the footer and Back fixed above it on the right, no duplicate top Back button.
-9. **Alert contract.** Red below 125 GiB; orange below 300 GiB, growth >=10 GiB, yellow ? for
+9. **Alert contract.** Red below 10% (configurable); orange below 20% (configurable), growth >=10 GiB, yellow ? for
    incomplete/failed tracked-root measurement or failed free-space check. Red > orange > yellow. Cancellation is not an alert.
    Keep code, boundary tests, settings legend, and docs consistent.
 10. **Persistence.** Preserve `local.darien.diskmonitor`, interval keys, and existing
