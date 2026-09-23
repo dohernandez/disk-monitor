@@ -498,12 +498,12 @@ final class Model: ObservableObject {
     }
     func chooseRoots(asProject: Bool) {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
-        panel.prompt = asProject ? "Add project folders" : "Add cache folders"
+        panel.prompt = asProject ? "Add folders" : "Add cache folders"
         if panel.runModal() == .OK { for url in panel.urls { addRoot(url, asProject: asProject) } }
     }
     func chooseProjects() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.prompt = "Choose Projects folder"
+        panel.prompt = "Choose folder"
         if panel.runModal() == .OK, let url = panel.url { setProjects(url.path) }
     }
     func addFolder(_ url: URL) {
@@ -682,9 +682,9 @@ struct FolderSettings: View {
             Text("Tracked folders").font(.headline)
             Stepper("Largest folders: \(model.largestCount)", value: Binding(get: {model.largestCount}, set: {model.configureLargestCount($0)}), in: 1...50)
             Text("Folder settings save immediately. Removing a folder stops tracking; it does not delete files or saved measurements.").font(.caption).foregroundStyle(Palette.secondary)
-            Text("Project folders").fontWeight(.semibold)
+            Text("Folders").fontWeight(.semibold)
             ForEach(model.projectRoots) { root in ProjectSettingRow(model: model, root: root) }
-            Button("Add project folders…") { model.chooseRoots(asProject: true) }
+            Button("Add folders…") { model.chooseRoots(asProject: true) }
             Divider()
             Text("Caches & tools").fontWeight(.semibold)
             ForEach(model.defaultCacheOptions.filter { candidate in !model.projectRoots.contains { $0.path == candidate.path } && !model.customCaches.contains { $0.path == candidate.path } }) { root in
@@ -849,7 +849,7 @@ struct Dashboard: View {
                     Divider().padding(.vertical, 3)
                     HStack { Text("FOLDERS").fontWeight(.semibold); Spacer(); Text("Size / change") }.font(.system(size: 10)).foregroundStyle(Palette.secondary)
                     ForEach(model.projectRoots) { root in FolderRow(model: model, root: root) }
-                    Button("Add project folders…") { model.chooseRoots(asProject: true) }
+                    Button("Add folders…") { model.chooseRoots(asProject: true) }
                         .buttonStyle(.plain).foregroundStyle(Palette.accent).font(.system(size: 11))
                     Text("SHARED CACHES & TOOLS").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
                     VStack(spacing: 1) { ForEach(model.caches) { root in FolderRow(model: model, root: root) } }

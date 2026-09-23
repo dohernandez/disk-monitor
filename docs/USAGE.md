@@ -58,7 +58,7 @@ Paths are relative to your home directory:
 
 | Row | Path |
 |---|---|
-| Projects · YeagerAI | `~/Documents/YeagerAI` (including its `worktree/` tree) |
+| Folders | User-selected paths (existing saved labels are preserved) |
 | Library caches | `~/Library/Caches` |
 | Go modules | `~/go/pkg/mod` |
 | Cargo | `~/.cargo` |
@@ -67,8 +67,7 @@ Paths are relative to your home directory:
 | Claude session history | `~/.claude/projects` |
 | Docker VM storage | `~/Library/Containers/com.docker.docker/Data/vms` |
 
-The project root is currently specific to this machine's layout. Use **Add folder**
-for other roots or for deep folders needing their own scheduled measurements.
+Use **Add folders…** to select roots or deep folders needing scheduled measurements.
 Nix is an informational row only; Nix reclamation and Docker-internal accounting
 are not implemented.
 
@@ -166,3 +165,10 @@ persists them across restarts; Back discards unsaved threshold edits. The previe
 and legend show each percentage’s equivalent storage using the monitored volume.
 Upgrading replaces the old fixed 125/300 GiB limits with these percentage defaults.
 Folder growth remains an independent 10 GiB threshold.
+
+## Folder labels in Settings
+
+Under Tracked folders, **Folders → Add folders…** accepts source directories,
+agent workspaces and other folders. The same Add folders… action is available
+on the dashboard. **Caches & tools** remains separate. Existing folder labels,
+paths, saved measurements and ranking behavior are unchanged.
