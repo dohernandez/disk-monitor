@@ -5,7 +5,7 @@
 ## Using the dashboard
 
 The header shows free space on the filesystem containing your home directory.
-The top five ranks measured projects, worktree repositories, and cache folders.
+The configurable largest-folder list ranks measured projects, worktree repositories, and cache folders.
 Click a ranked folder or folder alert to reveal it in the expandable tree.
 This is a ranking of tracked candidates, not a whole-disk search.
 
@@ -137,3 +137,25 @@ without them; older app versions ignore them (and may show default folders again
 No files are deleted and no preferences or permissions reset. Regression fixtures
 cover an empty/default home, selection, duplicate prevention, missing custom paths,
 restart persistence, legacy migration and removal from alerts/rankings.
+
+## Folder settings
+
+Settings → Tracked folders configures the largest-folder count (1–50, default 5),
+multiple project roots with editable labels, detected default-cache toggles and
+custom cache roots. These controls save immediately, separately from refresh
+interval edits. Project labels save with Rename or Return. Remove stops tracking
+without deleting measurements or files. The top list ranks measured children across
+all project roots, worktree children, Library cache children and configured cache/extra
+roots, suppressing overlapping parent/child entries as before.
+
+Optional saved fields projects, customCaches and largestCount preserve old JSON
+compatibility. With projects absent, the old projectPath or legacy saved YeagerAI
+root remains active; an explicitly empty projects array means no project roots.
+Existing readings, extras, exclusions and intervals are preserved. Older app versions
+ignore the new fields and cannot reproduce multiple-root/count settings on rollback.
+Fixture checks cover migration, multiple roots, label/count persistence, boundaries,
+custom caches, duplicate prevention and ranking across roots. Native folder-picker
+and Rename/Remove click behavior still require manual acceptance.
+
+In Settings, Free disk space and Folder sizes stay together at the top, followed
+by their Save settings button. Tracked folders appears below these refresh controls.
