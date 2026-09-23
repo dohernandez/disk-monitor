@@ -156,3 +156,6 @@ ignore the new fields and cannot reproduce multiple-root/count settings on rollb
 Fixture checks cover migration, multiple roots, label/count persistence, boundaries,
 custom caches, duplicate prevention and ranking across roots. Native folder-picker
 and Rename/Remove click behavior still require manual acceptance.
+
+In Settings, Free disk space and Folder sizes stay together at the top, followed
+by their Save settings button. Tracked folders appears below these refresh controls.

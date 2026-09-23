@@ -688,9 +688,7 @@ struct RefreshSettings: View {
                 Spacer()
             }
             VStack(alignment: .leading, spacing: 8) {
-                FolderSettings(model: model)
-            Divider()
-            Text("Free disk space").font(.system(size: 13, weight: .medium))
+                Text("Free disk space").font(.system(size: 13, weight: .medium))
                 HStack {
                     Text("Check every")
                     TextField("30", text: $diskSeconds).textFieldStyle(.roundedBorder).frame(width: 80).accessibilityLabel("Free space interval in seconds")
@@ -718,6 +716,8 @@ struct RefreshSettings: View {
                 }.buttonStyle(.borderedProminent).tint(Palette.button).foregroundStyle(.white)
             }
             Text("Changes apply immediately and are remembered after restart. The next refresh uses your new interval; an active scan continues.").font(.system(size: 10)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+            Divider()
+            FolderSettings(model: model)
             Divider()
             UpdateSettings()
             Divider()
