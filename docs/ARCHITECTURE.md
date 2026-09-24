@@ -268,3 +268,16 @@ traversal, or unexpected directory permissions can still prevent a measurement.
 This is a narrow one-shot operation, not a security boundary against an already
 compromised administrator or a modified app running as your user. Use trusted signed
 updates. No claim is made that the app is Apple-notarized or independently audited.
+
+## Deleted growth candidates
+
+Free-space refresh and completed scan batches asynchronously check saved growth
+candidates with metadata-only lstat calls. ENOENT/ENOTDIR confirms absence;
+permission and I/O failures do not. Confirmed absent paths stop producing growth
+alerts and leave the largest-folder ranking. Their saved bytes/date remain; an
+optional `missing` field persists this state and the old comparison is cleared.
+A successful scan of a recreated folder establishes a new baseline before growth
+can be reported again. Legacy readings decode without the optional field. A late
+validation result cannot overwrite a newer reading. No monitored file is changed.
+Fixture checks cover deletion, retained history, restart, recreation and error
+classification; live UI behavior remains a separate manual acceptance check.
