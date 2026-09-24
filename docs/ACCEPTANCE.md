@@ -149,21 +149,21 @@ and Rename/Remove click behavior still require manual acceptance.
 - Unsigned source builds report unavailable and cannot register an unsigned/missing helper.
 - Release builds must include the signed scanner; missing credentials or helper fail packaging.
 - Refresh waits for current availability, opens setup when needed, and otherwise measures.
-- No permanent setup link appears under an idle Spotlight row. Settings retains scanner management.
+- No permanent setup link appears under an idle Spotlight row. Settings has only the existing Spotlight toggle.
 - A manual access failure opens guided setup; periodic scans never register new helpers.
 - One Spotlight toggle controls tracking, scanner registration and scheduling.
 - On enables registration; off cancels owned work and unregisters. Rapid on/off preserves the latest choice.
 - Startup rechecks enabled Spotlight even with a recent saved size. Off startup never registers.
 - Missing approval/access opens guidance; already-granted access does not prompt.
 - Updates use the same startup path after restart. No extra scanner/schedule toggle exists.
-- Startup preflight never runs du or traverses the index; incompatible helpers require repair.
+- Startup preflight never runs du or traverses the index; incompatible helpers receive one internal replacement attempt.
 - Signed app/helper mismatch, wrong peer, modified code and arbitrary paths fail closed.
 - Tests never register a daemon, request credentials or scan the real Spotlight index.
 - With accepted packaging, verify setup, the Spotlight toggle, startup access checks, row refresh,
   Stop, saved result timestamps, cooldown and retry after setup failure.
 - Verify no parallel ordinary/privileged scan; late/cancelled results cannot overwrite
   saved readings. Disconnect after measure must not pretend the scan has exited.
-- Repeat update repair, restart and disable on both architectures before release.
+- Repeat automatic helper replacement, permission return, restart and disable on both architectures before release.
 - Kill only the deliberately tested client during an accepted scan: after relaunch,
   new scans remain blocked with explicit Mac-restart guidance. After a Mac restart,
   the previous boot marker clears. Never perform this against an unrelated process.
@@ -203,3 +203,24 @@ and disable during measurement. They use injected replies and never register a h
 CI additionally compiles the actual helper and bridge with a dummy public identity;
 no endpoint is executed by that compilation check. Live permission UI remains a
 separate manual check; old preview screenshots do not prove the new flow.
+
+Permission-flow fixtures verify bounded automatic replacement, persistent failure
+without a retry loop, denial without replacement, return from Full Disk Access,
+return from background approval, no activation loop, and off during replacement.
+Manual acceptance still required: update from 1.7.2 with Spotlight enabled, approve
+only missing OS permissions, return to the app and observe one resumed measurement.
+No separate repair, registration or verification buttons should appear.
+
+## Shared folder access and single app bundle
+
+- Readable ordinary folder: scan without a permission prompt or privileged IPC.
+- Access denied: request only when interactive; continue after access is available.
+- Recheck denied descendants, not just their readable parent; non-permission errors
+  do not trigger permission requests. Cancellation/stop-tracking wins over late checks.
+- Spotlight follows the same gate; its fixed privileged backend remains internal.
+- Installer contains no Contents/Library/Scanner or Disk Monitor Scanner.app.
+- Both internal executables retain pinned signatures after installer re-signing.
+- ScannerBridge resolves the main app bundle in its no-IPC bundle fixture.
+- Live acceptance: upgrade 1.7.2, check old registration replacement, allow Disk Monitor
+  only as required by macOS, and verify both ordinary and Spotlight measurement.
+  CI and static fixtures do not establish macOS permission attribution or migration.

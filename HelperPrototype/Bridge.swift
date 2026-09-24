@@ -17,6 +17,11 @@ import ServiceManagement
         emit(message); exit(0)
     }
     static func main() {
+        if CommandLine.arguments == [CommandLine.arguments[0], "--bundle-self-test"] {
+            guard Bundle.main.bundleIdentifier == HelperIdentity.containerID else { exit(1) }
+            print("PASS: scanner client belongs to Disk Monitor's main bundle")
+            return // No service object, IPC, registration or permission access.
+        }
         guard CommandLine.arguments.count == 2,
               ["status", "register", "unregister", "measure", "cancel", "check"].contains(CommandLine.arguments[1]) else { exit(2) }
         let operation = CommandLine.arguments[1]

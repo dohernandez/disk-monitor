@@ -11,7 +11,13 @@ from bundle_info import APP_NAME, BINARY, IDENTIFIER
 
 def check(app, require_scanner=False):
     app = Path(app).resolve()
-    if require_scanner and not (app / 'Contents/Library/Scanner/Disk Monitor Scanner.app').is_dir():
+    if (app / 'Contents/Library/Scanner').exists():
+        raise ValueError('Obsolete nested scanner app is not allowed')
+    binaries = [app / 'Contents/MacOS' / name for name in ('Scanner', 'ScannerBridge')]
+    has_scanner = any(path.exists() for path in binaries)
+    if has_scanner and not all(path.is_file() and not path.is_symlink() for path in binaries):
+        raise ValueError('Incomplete internal scanner package')
+    if require_scanner and not has_scanner:
         raise ValueError('Release requires the signed scanner; refusing a scanner-less app')
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     assert info['CFBundleIdentifier'] == IDENTIFIER
@@ -22,10 +28,10 @@ def check(app, require_scanner=False):
     assert (app/'Contents/Resources/SPARKLE-LICENSE').is_file()
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--self-test'], check=True, timeout=120)
-    scanner_host = app / 'Contents/Library/Scanner/Disk Monitor Scanner.app'
-    if scanner_host.exists():
+    if has_scanner:
         subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--scanner-package-self-test'], check=True, timeout=30)
-        for signed in [scanner_host, scanner_host / 'Contents/MacOS/Scanner']:
+        subprocess.run([str(binaries[1]), '--bundle-self-test'], check=True, timeout=10)
+        for signed in binaries:
             signature = subprocess.run(['codesign', '-d', '--verbose=4', str(signed)], capture_output=True, text=True, check=True)
             assert '(runtime)' in signature.stderr, 'Scanner code must retain hardened runtime'
             entitlements = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(signed)], capture_output=True, text=True, check=True)
