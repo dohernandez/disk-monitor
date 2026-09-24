@@ -181,6 +181,8 @@ Spotlight index is a detected Shared caches & tools entry with a Settings toggle
 Its root-owned directory may remain protected even with Full Disk Access; no
 index cleanup is performed. The Spotlight toggle enables tracking and its scanner together. Startup and enabling
 it while running check macOS approval and access; missing permissions open guidance.
-Turning it off unregisters the scanner. Refresh also checks access before measuring. Other protected folders
+Turning it off unregisters the scanner. Refresh also checks access before measuring.
+Returning from permission settings continues the pending scan automatically; no separate
+scanner setup or manual repair sequence is required. Other protected folders
 use the general Full Disk Access guidance in Info. Release packages include the signed
 scanner; local unsigned builds cannot enable it. See [usage details](docs/USAGE.md#spotlight-index-tracking).

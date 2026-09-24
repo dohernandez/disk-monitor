@@ -256,19 +256,23 @@ Settings. Already-granted access does not show another prompt.
 New installations start with Spotlight off; existing saved selections are preserved.
 Enabling Spotlight also includes it in the normal folder scan schedule: no second
 scanner or scheduled-measurement switch exists. The row refresh rechecks access
-before a manual measurement. **Spotlight access…** in Settings opens guidance only.
+before a manual measurement. There is no separate scanner setup control in Settings.
 Other tracked folders continue to use the ordinary unprivileged scanner.
 
 The startup access check uses a versioned, authenticated, argument-free IPC operation
 that opens only the fixed Spotlight directory and its fixed ancestors. It does not
 walk the index or run `du`. Permission denial is distinguished from directory safety
-failure. Protocol version mismatch follows repair guidance instead of assuming access.
+failure. A preflight launch failure triggers one automatic asynchronous unregister/register
+of this app's service, followed by a fresh access check. Failure after that attempt
+reports the actual error without an off/on repair wizard. No replacement is attempted
+while a measurement has unconfirmed completion. Other background items are untouched.
 
-After a launch failure, Repair guides: unregister; turn OFF only this app's
-background approval in Login Items & Extensions; register; turn approval ON; verify.
-This sequence recovered the build 6 → 7 prototype on the test Mac without changing
-Full Disk Access. It is not a guarantee for every update. Never reset unrelated
-background items or grant a shared shell Full Disk Access.
+Returning from the permission settings opened by Disk Monitor rechecks access.
+After Full Disk Access changes the internal helper is restarted through the same
+registration lifecycle so it can observe the grant. Successful access closes the
+permission window and resumes a pending Spotlight refresh through the shared scan
+slot. Turning Spotlight off clears that intent. Ordinary app activation does not
+open permission windows or loop through setup. The OS may still require approval.
 
 The helper accepts only authenticated, argument-free ping, fixed access check, fixed Spotlight measure
 and own-measurement cancellation. It cannot scan arbitrary added paths. The app
