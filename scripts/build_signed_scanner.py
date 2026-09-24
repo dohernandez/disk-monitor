@@ -52,7 +52,10 @@ def main():
             p12.unlink()
             security('set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', keychain_password, keychain)
             security('list-keychains', '-d', 'user', '-s', *previous, keychain)
-            identities = security('find-identity', '-v', '-p', 'codesigning', keychain)
+            # Self-signed identities need not chain to a globally trusted root.
+            # Match the exact key pair; codesign and the package's pinned requirement
+            # verify its use without changing certificate trust settings.
+            identities = security('find-identity', '-p', 'codesigning', keychain)
             if fingerprint not in identities.upper():
                 raise RuntimeError('Scanner signing identity does not match the configured public fingerprint')
             env['SCANNER_SIGNING_SHA1'] = fingerprint
