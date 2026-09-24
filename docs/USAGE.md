@@ -190,80 +190,45 @@ The Nix store row remains informational: Separate accounting means the app does
 not measure it yet. APFS volume usage can be measured independently, but is not a
 Nix garbage-collection/reclaimable-space estimate.
 
-## Protected-folder scanner integration
+## Shared folder access and measurement
 
-The fixed-target scanner replaces the failed AppleScript authorization path.
-Release packaging requires the signed scanner; missing credentials or a missing
-scanner fail the release instead of publishing an incomplete app. Local unsigned
-builds remain supported and explicitly report scanner unavailability.
+`FolderAccess` owns the access and measurement flow for every folder. The model
+prepares a batch, then calls the same `measure(root)` operation for each allowed
+root. Startup reconciles required resources; enabling a tracked folder and manual
+refresh use the same gate. There is no Spotlight-specific access controller or
+setup window.
 
-**Settings → Tracked folders → Spotlight index** is the single control for both
-tracking and the background scanner. Turning it on registers the signed scanner,
-checks background approval and tests fixed-directory read access. Turning it off
-cancels any owned measurement before unregistering, keeping saved measurements.
-A late registration/check response cannot override a newer toggle choice.
+Ordinary filesystem access lets macOS display native consent prompts. A denial is
+shown on the folder row and preserves complete saved measurements. EPERM does not
+prove Full Disk Access is missing. The row can open System Settings when the user
+chooses; the app never imitates a macOS permission dialog or opens an unsolicited
+Full Disk Access window. Returning from Settings rechecks pending folders through
+the same gate and resumes them in the single scan slot.
 
-At application startup, the persisted Spotlight selection is reconciled with macOS
-and access is checked again. An update restarts the app and therefore uses this same
-startup path; there is no separate update trigger. A recent saved measurement never
-skips the access check. Enabling Spotlight while the app is running does the same
-check immediately. When permission is missing, setup explains it and offers System
-Settings. Already-granted access does not show another prompt.
+`PrivilegedFolderReader` is internal I/O for the existing fixed administrator-owned
+index. It contains no views or permission UI. The signed, argument-free helper
+retains the tested measurement, cancellation, timeout, authentication and safety
+checks. Arbitrary paths are not passed to privileged code. Ordinary folders use the
+normal cancellable directory scanner. Both return one `FolderAccess.Result`; the
+model applies the same saved-reading/error rules. Elevated summaries retain their
+actual timestamp and do not create cross-method growth deltas.
 
-New installations start with Spotlight off; existing saved selections are preserved.
-Enabling Spotlight also includes it in the normal folder scan schedule: no second
-scanner or scheduled-measurement switch exists. The row refresh rechecks access
-before a manual measurement. There is no separate scanner setup control in Settings.
-Every folder passes through `FolderAccess.prepare` before scanning. It checks read
-access (including previously denied child directories), requests missing access for
-interactive scans, and resumes pending folders when access is granted. Ordinary
-folders never use privileged IPC. The fixed Spotlight backend is selected internally
-by the access module; no arbitrary folder path is sent to the privileged helper.
-Background refreshes do not repeatedly open permission prompts. A failed or denied
-check never replaces a saved size with zero.
+Registration awaiting native background approval is a pending permission state,
+even when register returns an error. It must not trigger an unregister/register
+repair loop. The internal bridge now has signing identifier
+`local.darien.diskmonitor.scanner.client`, distinct from the removed nested app's
+identifier. The one-time old-client migration and resource release are internal;
+there is no second enable switch or repair workflow. Package signatures still pin
+the dedicated release certificate. This is one Disk Monitor.app.
 
-There is one app bundle: Disk Monitor.app. Scanner and ScannerBridge are internal
-executables in Contents/MacOS; the daemon plist and its AssociatedBundleIdentifiers
-belong to Disk Monitor. Full Disk Access is granted to Disk Monitor itself. The old
-nested Disk Monitor Scanner.app is absent from new installers. On the first enabled
-startup after this layout change, an existing registration is refreshed once through
-SMAppService before access is checked. The updater replaces the old app bundle;
-users do not delete internal components. macOS may retain historical permission
-entries; the application does not reset the system permission databases.
+Unknown scan completion continues to block new expensive scans and updater relaunch
+until completion is confirmed or the Mac reboots. Cancellation never implies that
+an unobserved privileged process has stopped. Release package and fixture checks
+do not establish live native permission, migration or update acceptance.
 
-The startup access check uses a versioned, authenticated, argument-free IPC operation
-that opens only the fixed Spotlight directory and its fixed ancestors. It does not
-walk the index or run `du`. Permission denial is distinguished from directory safety
-failure. A preflight launch failure triggers one automatic asynchronous unregister/register
-of this app's service, followed by a fresh access check. Failure after that attempt
-reports the actual error without an off/on repair wizard. No replacement is attempted
-while a measurement has unconfirmed completion. Other background items are untouched.
-
-Returning from the permission settings opened by Disk Monitor rechecks access.
-After Full Disk Access changes the internal helper is restarted through the same
-registration lifecycle so it can observe the grant. Successful access closes the
-permission window and resumes a pending Spotlight refresh through the shared scan
-slot. Turning Spotlight off clears that intent. Ordinary app activation does not
-open permission windows or loop through setup. The OS may still require approval.
-
-The helper accepts only authenticated, argument-free ping, fixed access check, fixed Spotlight measure
-and own-measurement cancellation. It cannot scan arbitrary added paths. The app
-serializes this request with ordinary folder scans, retains complete saved readings
-on failure, and saves the helper's actual timestamp on success. Cooldown responses
-retain their original date; they are not new measurements. A visible 60-second
-countdown explains the minimum interval. Administrator summaries do not generate
-cross-method growth deltas.
-
-Stop requests cancellation of the owned scan. A lost connection does not prove
-termination. The app saves the boot identifier before requesting measurement and
-blocks new scans and updater relaunch until completion is confirmed or the Mac
-restarts. Reopening the app preserves that block. Setup explains recovery and offers
-Quit; quitting alone is not scanner unregistration or proof the scan stopped.
-Crash/reboot recovery still requires live acceptance before release.
-
-Release checks require the signed scanner in both the staged app and mounted
-installer. Successful package checks do not establish live macOS approval or
-crash/reboot acceptance; record those separately in ACCEPTANCE.md.
+Permission behavior follows [Apple's SMAppService example](https://developer.apple.com/forums/thread/802443),
+[Apple's guidance on ambiguous permission errors](https://developer.apple.com/forums/thread/114452)
+and [DaisyDisk's documented native prompts and Full Disk Access settings](https://web.daisydiskapp.com/guide/full-disk-access).
 
 ## Folders protected by macOS
 

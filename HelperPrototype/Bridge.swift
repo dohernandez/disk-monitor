@@ -29,11 +29,11 @@ import ServiceManagement
         if operation == "status" { finish(BridgeMessage(event: "status", status: service.status.rawValue)) }
         if operation == "register" {
             do { try service.register(); finish(BridgeMessage(event: "status", status: service.status.rawValue)) }
-            catch { finish(BridgeMessage(event: "status", status: service.status.rawValue, error: error.localizedDescription)) }
+            catch { finish(BridgeMessage(event: "status", status: service.status.rawValue, error: error.localizedDescription, errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)) }
         }
         if operation == "unregister" {
             service.unregister { error in
-                finish(BridgeMessage(event: "status", status: service.status.rawValue, error: error?.localizedDescription))
+                finish(BridgeMessage(event: "status", status: service.status.rawValue, error: error?.localizedDescription, errorDomain: (error as NSError?)?.domain, errorCode: (error as NSError?)?.code))
             }
             RunLoop.current.run(); exit(2)
         }

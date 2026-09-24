@@ -224,3 +224,18 @@ No separate repair, registration or verification buttons should appear.
 - Live acceptance: upgrade 1.7.2, check old registration replacement, allow Disk Monitor
   only as required by macOS, and verify both ordinary and Spotlight measurement.
   CI and static fixtures do not establish macOS permission attribution or migration.
+
+## Native shared access flow (supersedes prior setup-window acceptance)
+
+- All folder rows use FolderAccess.prepare/measure; the model contains no privileged
+  path dispatch. No SpotlightAccess or ProtectedFolderSetup is built.
+- Readable, denied, granted-after-denial and cancelled checks use the same gate.
+- Pending native approval plus a registration NSError remains pending; no repair loop.
+- The privileged measurement returns through the same result application path and
+  preserves the helper timestamp and historical administrator-reading compatibility.
+- No arbitrary folder is sent through privileged IPC. Native helper fixtures remain.
+- Manually verify ordinary folder and Music consent, native background notification,
+  returning from FDA settings, an actual protected index measurement, cancellation,
+  off during a pending check and upgrade from 1.7.3 with the old client registration.
+- Verify no separate access window opens, no duplicate scan starts, and denied access
+  preserves saved values. These live checks are not established by fixture success.

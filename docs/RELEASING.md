@@ -220,3 +220,10 @@ architectures, checks signatures, fixtures, updater startup and increasing helpe
 build numbers, and uploads test artifacts without releasing or registering anything.
 Live guided setup, measurement, cancellation and update/reapproval must be recorded
 separately; compilation and package checks do not establish them.
+
+
+The shared-flow client uses signing identifier `local.darien.diskmonitor.scanner.client`;
+the old nested-app identifier is not reused by the command-line client. Pair validation
+compares two builds of this layout, while upgrade acceptance from earlier releases
+must also verify native background approval and the registered executable path.
+No separate setup app or setup window is packaged.

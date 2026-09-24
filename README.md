@@ -177,13 +177,9 @@ and Rename/Remove click behavior still require manual acceptance.
 
 ## Spotlight index tracking
 
-Spotlight index is a detected Shared caches & tools entry with a Settings toggle.
-Its root-owned directory may remain protected even with Full Disk Access; no
-index cleanup is performed. The Spotlight toggle enables tracking and its scanner together. Startup and enabling
-it while running check macOS approval and access; missing permissions open guidance.
-Turning it off unregisters the scanner. Refresh also checks access before measuring.
-Returning from permission settings continues the pending scan automatically; no separate
-scanner setup or manual repair sequence is required. Every folder uses the shared
-access check and requests missing permissions before scanning. There is one Disk
-Monitor app; protected access is handled by internal executables. Release packages include the signed
-scanner; local unsigned builds cannot enable it. See [usage details](docs/USAGE.md#spotlight-index-tracking).
+Spotlight index is a detected cache with the same tracking toggle, refresh action,
+access flow and scan schedule as other folders. Disk Monitor uses native macOS
+permission prompts and reports denied access on the folder row. There are no
+scanner setup or repair windows. The working signed privileged measurement remains
+internal to the single app; ordinary folders use direct filesystem access.
+Saved readings are kept on failures. See [usage details](docs/USAGE.md#shared-folder-access-and-measurement).
