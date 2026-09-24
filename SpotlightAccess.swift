@@ -415,7 +415,7 @@ struct ProtectedFolderSetup: View {
 
             }
             Spacer()
-            Text("Spotlight is controlled in Settings → Tracked folders. Disk Monitor never changes or deletes monitored files.").font(.caption).foregroundStyle(.secondary)
+            Text("Disk Monitor never changes or deletes monitored files.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }.padding(24).frame(minWidth: 470, minHeight: 290).preferredColorScheme(.dark)
     }
 }
