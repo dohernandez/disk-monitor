@@ -133,3 +133,13 @@ ignore the new fields and cannot reproduce multiple-root/count settings on rollb
 Fixture checks cover migration, multiple roots, label/count persistence, boundaries,
 custom caches, duplicate prevention and ranking across roots. Native folder-picker
 and Rename/Remove click behavior still require manual acceptance.
+
+## Spotlight index tracking
+
+- Fixture tests cover absent/present index paths, largest-folder eligibility and
+  persisted exclusions without deleting saved readings. Real Spotlight is not scanned.
+- Verify the Settings toggle and Shared caches & tools row on a Mac with an index.
+- Root-only access must stay protected/partial, never zero; do not grant privileges
+  or rebuild the index as an acceptance shortcut.
+- Native toggle/click behavior and successful administrator-owned index measurement
+  remain manual checks; the app has no privileged measurement helper.

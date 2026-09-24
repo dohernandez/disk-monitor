@@ -215,3 +215,21 @@ are unchanged. Save alert thresholds applies immediately, including the menu bad
 The settings preview and saved legend show equivalent binary-formatted storage;
 unknown capacity shows unavailable, never a fabricated zero threshold. Folder
 growth remains 10 GiB and measurement-warning priority is unchanged.
+
+## Spotlight index tracking
+
+Shared caches & tools includes Spotlight index when
+`/System/Volumes/Data/.Spotlight-V100` exists or has a saved reading. Its Settings
+checkbox enables/disables tracking like other detected caches; disabling keeps saved
+measurements. The path is injectable for fixture tests; tests never scan the real index.
+
+Scans use the existing serial, cancellable directory scanner. Root ownership can
+prevent measurement even with Full Disk Access. Permission-only failures display
+Protected by macOS (or a partial lower bound), not zero, and do not raise the
+measurement-warning badge. No administrator helper, sudo prompt, index deletion or
+rebuild is added. Previously complete readings remain saved on failure. A full
+index scan can be expensive because it may contain millions of files.
+
+The Nix store row remains informational: Separate accounting means the app does
+not measure it yet. APFS volume usage can be measured independently, but is not a
+Nix garbage-collection/reclaimable-space estimate.

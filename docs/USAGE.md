@@ -172,3 +172,21 @@ Under Tracked folders, **Folders → Add folders…** accepts source directories
 agent workspaces and other folders. The same Add folders… action is available
 on the dashboard. **Caches & tools** remains separate. Existing folder labels,
 paths, saved measurements and ranking behavior are unchanged.
+
+## Spotlight index tracking
+
+Shared caches & tools includes Spotlight index when
+`/System/Volumes/Data/.Spotlight-V100` exists or has a saved reading. Its Settings
+checkbox enables/disables tracking like other detected caches; disabling keeps saved
+measurements. The path is injectable for fixture tests; tests never scan the real index.
+
+Scans use the existing serial, cancellable directory scanner. Root ownership can
+prevent measurement even with Full Disk Access. Permission-only failures display
+Protected by macOS (or a partial lower bound), not zero, and do not raise the
+measurement-warning badge. No administrator helper, sudo prompt, index deletion or
+rebuild is added. Previously complete readings remain saved on failure. A full
+index scan can be expensive because it may contain millions of files.
+
+The Nix store row remains informational: Separate accounting means the app does
+not measure it yet. APFS volume usage can be measured independently, but is not a
+Nix garbage-collection/reclaimable-space estimate.

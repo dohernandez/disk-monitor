@@ -174,3 +174,9 @@ ignore the new fields and cannot reproduce multiple-root/count settings on rollb
 Fixture checks cover migration, multiple roots, label/count persistence, boundaries,
 custom caches, duplicate prevention and ranking across roots. Native folder-picker
 and Rename/Remove click behavior still require manual acceptance.
+
+## Spotlight index tracking
+
+Spotlight index is a detected Shared caches & tools entry with a Settings toggle.
+Its root-owned directory may remain protected even with Full Disk Access; no
+administrator helper or index cleanup is installed. See [usage details](docs/USAGE.md#spotlight-index-tracking).
