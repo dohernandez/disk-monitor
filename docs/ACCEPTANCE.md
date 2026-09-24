@@ -144,23 +144,23 @@ and Rename/Remove click behavior still require manual acceptance.
 - Native toggle/click behavior and successful administrator-owned index measurement
   remain manual checks; the app installs no persistent privileged helper.
 
-## Manual Spotlight authorization
+## Integrated protected-folder scanner (pending release acceptance)
 
-Automated self-tests compile (never execute) the authorization script, syntax-check the shell command, and exercise its path guards without elevation (system directory accepted; user-owned, symlink and missing directories rejected). They reject wrong
-paths, malformed/multiline/negative/overflow/nonzero-exit totals, and verify cancellation,
-failure, successful persistence and cross-method growth suppression. Fixture-injected
-paths cannot initiate administrator measurement. No test prompts for credentials or
-scans the real index.
+- Default builds must report unavailable and cannot register an unsigned/missing helper.
+- Signed app/helper mismatch, wrong peer, modified code and arbitrary paths fail closed.
+- Tests never register a daemon, request credentials or scan the real Spotlight index.
+- With accepted packaging, verify setup, explicit consent, scheduled opt-in, row refresh,
+  Stop, saved result timestamps, cooldown and retry after setup failure.
+- Verify no parallel ordinary/privileged scan; late/cancelled results cannot overwrite
+  saved readings. Disconnect after measure must not pretend the scan has exited.
+- Repeat update repair, restart and disable on both architectures before release.
 
-Manual release checks (not established by compilation/fixtures):
-- Click the Spotlight action, review the explanation, cancel; no authorization starts.
-- Continue and cancel the macOS dialog; old size/date remain and scanning unlocks.
-- Authorize on a test Mac: only a total appears, saved with date and administrator label.
-- During measurement other scans, Stop, Quit and updater relaunch are blocked; popup
-  can close/reopen. Completion restores normal controls. Normal timers never prompt.
-- Failed/CPU-limited/permission-denied measurement retains saved size; no zero is invented.
-- Test the system prompt and Full Disk Access attribution from an installed release on
-  both architectures. Ad-hoc build/self-tests are not proof of this interactive path.
+September 24 preview evidence (build 7, arm64): the user observed a running scan
+followed by “Measurement cancelled”, then disabled the scanner. After disabling,
+the registered service and fixed-path du process were absent. This confirms visible
+cancellation feedback and final cleanup, not the precise child-exit timing before
+unregister or acceptance of the new nested-host integration. Intentional cancellation
+now has its own heading in source; no replacement preview was installed.
 
 ## Deleted growth candidates
 
@@ -174,3 +174,12 @@ can be reported again. Legacy readings decode without the optional field. A late
 validation result cannot overwrite a newer reading. No monitored file is changed.
 Fixture checks cover deletion, retained history, restart, recreation and error
 classification; live UI behavior remains a separate manual acceptance check.
+
+## General protected-folder guidance
+
+- Info shows Folders protected by macOS for all tracked-folder types, not just Spotlight.
+- Scroll the full text at normal popup size; Back and footer remain reachable.
+- Wording distinguishes partial, protected and historical readings, broad Full Disk
+  Access, background approval and launch failure without promising universal access.
+- Opening Info performs no authorization, registration or scan. Added folders cannot
+  invoke the Spotlight-only administrator operation.

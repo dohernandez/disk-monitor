@@ -12,6 +12,8 @@ from check_app import check
 
 def package(app, version, build, output):
     app, output = Path(app).resolve(), Path(output).resolve()
+    if (app / 'Contents/MacOS/Scanner').exists():
+        raise ValueError('Scanner-enabled release packaging is not accepted yet; refusing to replace its pinned signature with ad-hoc signing')
     output.mkdir(parents=True, exist_ok=True)
     architecture = platform.machine()
     if architecture not in ('arm64', 'x86_64'):

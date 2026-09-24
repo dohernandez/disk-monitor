@@ -66,6 +66,8 @@ jobs:
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
           sh build.sh
+      - name: Check unprivileged scanner fixtures
+        run: python3 scripts/check_helper_fixtures.py "$RUNNER_TEMP/build"
       - name: Verify update signatures and tamper rejection
         env:
           SPARKLE_TOOLS: ${{ runner.temp }}/build/sparkle

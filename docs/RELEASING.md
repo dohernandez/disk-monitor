@@ -179,3 +179,24 @@ before claiming end-to-end installation acceptance. An older signed feed can be
 replayed to delay update discovery; installed build comparison prevents it being
 used to offer an older build as a newer one. Protect GitHub access and the signing
 key independently.
+
+## Experimental scanner packaging
+
+`SCANNER_SIGNING_SHA1` is an optional public certificate fingerprint for isolated
+build validation, not a credential. When absent, the build contains no privileged
+scanner and cannot register one. When present, the signer must already be available
+in the build keychain. The nested Disk Monitor Scanner.app and its helper are signed
+inside-out with hardened runtime and no library-validation exemption. The parent
+app keeps its existing signing policy and updater.
+
+Never place the scanner private key on runtime Macs, commit it or expose it to PR
+jobs. A dedicated stable release key and main-only import/cleanup workflow are still
+required before enabling this feature in releases. Prototype keys are temporary
+and retired; they are not release identities. The installer may re-sign only the
+outer ad-hoc app and must preserve and verify the nested scanner's signature.
+The legacy direct-in-main-app helper layout is rejected by packaging.
+
+Run scripts/test_scanner_build.py and, for an isolated signed build,
+`DiskMonitor --scanner-package-self-test` before any installer acceptance. Neither
+command registers or measures. Live cancellation, guided setup, update/reapproval,
+restart and clean-Mac acceptance are separate from successful compilation.

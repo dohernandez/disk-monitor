@@ -183,45 +183,58 @@ measurements. The path is injectable for fixture tests; tests never scan the rea
 Scans use the existing serial, cancellable directory scanner. Root ownership can
 prevent measurement even with Full Disk Access. Permission-only failures display
 Protected by macOS (or a partial lower bound), not zero, and do not raise the
-measurement-warning badge. The optional manual administrator measurement is described below; ordinary scans never escalate. Previously complete readings remain saved on failure. A full
+measurement-warning badge. The optional scanner integration is described below; ordinary scans never escalate. Previously complete readings remain saved on failure. A full
 index scan can be expensive because it may contain millions of files.
 
 The Nix store row remains informational: Separate accounting means the app does
 not measure it yet. APFS volume usage can be measured independently, but is not a
 Nix garbage-collection/reclaimable-space estimate.
 
-## Manual administrator measurement
+## Protected-folder scanner integration (not released)
 
-The Spotlight row has **Measure with administrator access…**. After an explanation
-and Continue, macOS authorizes a fixed read-only size check. The app never requests,
-receives or stores the password. It installs no privileged helper, daemon, login
-item or sudoers entry. Automatic scans remain unprivileged; there is no automatic
-retry with administrator access. macOS may reuse authorization briefly for the same
-script ([AppleScript command reference](https://developer.apple.com/library/archive/documentation/AppleScript/Conceptual/AppleScriptLangGuide/reference/ASLR_cmds.html)).
+The working branch replaces the failed AppleScript authorization path with an
+optional, fixed-target scanner. Ordinary builds do not bundle or authorize this
+helper; setup explicitly reports when the signed package is unavailable.
 
-The compiled command accepts no user input. It checks the fixed Spotlight directory
-and its ancestors for symlinks, ACLs, root ownership and a restrictive allowlist of modes,
-then runs Apple's `/usr/bin/du -P -x -s -k` in a clean environment. Links are not
-followed and mounted filesystems are not crossed. Only a validated single total for
-that exact path is accepted. There are no elevated writes to monitored files, no
-index deletion/rebuild, and no app/cache/external scripts executed as root. The app
-saves the resulting size and date with its ordinary user permissions.
+A scanner-enabled build offers **Protected-folder setup…** on the Spotlight row.
+Setup validates the app/helper signatures before registration. Enable is an
+explicit user action; scheduled scans never register, authorize or open settings.
+After background approval and Full Disk Access as needed, use the row refresh to
+verify and measure. Scheduled Spotlight measurement is a separate opt-in toggle.
+Other tracked folders continue to use the ordinary unprivileged scanner.
 
-Cancellation at the system authorization dialog, errors, incomplete output and
-malformed results retain the previous reading and date. Successful results show
-**Administrator · saved size**. Growth is not calculated between this summary and
-ordinary recursive readings, which have different traversal scope. An optional
-`administratorMeasured` field preserves the distinction across restart; old JSON
-remains readable and older versions ignore it.
+After a launch failure, Repair guides: unregister; turn OFF only this app's
+background approval in Login Items & Extensions; register; turn approval ON; verify.
+This sequence recovered the build 6 → 7 prototype on the test Mac without changing
+Full Disk Access. It is not a guarantee for every update. Never reset unrelated
+background items or grant a shared shell Full Disk Access.
 
-Once authorized, this scan cannot be stopped from the unprivileged app. Stop and
-Quit are disabled while it runs; ordinary scans and updater relaunch wait. A 120-second
-CPU budget limits the command, but is not a wall-clock deadline: filesystem I/O may
-take longer. Cancelling authorization is supported. Force-quitting/crashing the app
-may leave the read-only system command running until it exits; do not rely on closing
-the popup to stop it. Full Disk Access, macOS protections, filesystem changes during
-traversal, or unexpected directory permissions can still prevent a measurement.
+The helper accepts only authenticated, argument-free ping, fixed Spotlight measure
+and own-measurement cancellation. It cannot scan arbitrary added paths. The app
+serializes this request with ordinary folder scans, retains complete saved readings
+on failure, and saves the helper's actual timestamp on success. Cooldown responses
+retain their original date; they are not new measurements. A visible 60-second
+countdown explains the minimum interval. Administrator summaries do not generate
+cross-method growth deltas.
 
-This is a narrow one-shot operation, not a security boundary against an already
-compromised administrator or a modified app running as your user. Use trusted signed
-updates. No claim is made that the app is Apple-notarized or independently audited.
+Stop requests cancellation of the owned scan. A lost connection after measurement
+starts does not prove termination: scans, Quit and updater relaunch remain paused
+while completion is unknown. This fail-closed recovery limitation still needs live
+acceptance before release. App closure alone is not scanner unregistration.
+
+Release signing, installer compatibility, clean-Mac setup, cancellation and restart
+acceptance remain required. No release workflow activates this integration yet.
+
+## Folders protected by macOS
+
+Info contains shared guidance for every tracked folder, including custom roots and
+caches. Permission-only failures are not empty folders. Full Disk Access can be
+reviewed in System Settings → Privacy & Security; reopen Disk Monitor after changing
+it and refresh the affected folder. This broad permission does not override every
+system ownership restriction. Background approval, Full Disk Access and administrator
+authorization are distinct; a helper launch failure must not be described as missing
+disk access. Adding a folder does not authorize administrator measurement.
+
+The general guidance does not extend the Spotlight-only administrator operation to
+other paths. Future protected-folder support requires separate validation. The
+automatic scanner remains an isolated prototype, not a shipped feature.
