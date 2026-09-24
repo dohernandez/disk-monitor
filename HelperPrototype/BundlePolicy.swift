@@ -6,7 +6,7 @@ import Security
 enum BundlePolicy {
     static func validateMetadata(at bundle: URL) throws {
         let info = try dictionary(bundle.appendingPathComponent("Contents/Info.plist"))
-        guard info["CFBundleIdentifier"] as? String == HelperIdentity.appID else { throw invalid("Unexpected app identity") }
+        guard info["CFBundleIdentifier"] as? String == HelperIdentity.containerID else { throw invalid("Unexpected app identity") }
         let plist = try dictionary(bundle.appendingPathComponent("Contents/Library/LaunchDaemons/" + HelperIdentity.serviceID + ".plist"))
         guard plist["Label"] as? String == HelperIdentity.serviceID,
               plist["BundleProgram"] as? String == "Contents/MacOS/Scanner",
@@ -14,16 +14,26 @@ enum BundlePolicy {
               plist["MachServices"] as? [String: Bool] == [HelperIdentity.serviceID: true] else {
             throw invalid("Scanner package configuration does not match this app")
         }
-        let executable = bundle.appendingPathComponent("Contents/MacOS/Scanner")
-        let values = try executable.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true,
-              FileManager.default.isExecutableFile(atPath: executable.path) else {
-            throw invalid("Scanner executable is missing or not a regular executable")
+        guard !FileManager.default.fileExists(atPath: bundle.appendingPathComponent("Contents/Library/Scanner").path) else {
+            throw invalid("Obsolete nested scanner app is not supported")
         }
+        for name in ["Scanner", HelperIdentity.clientName] {
+            let executable = bundle.appendingPathComponent("Contents/MacOS/" + name)
+            let values = try executable.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true,
+                  FileManager.default.isExecutableFile(atPath: executable.path) else {
+                throw invalid("Scanner executable is missing or not a regular executable")
+            }
+        }
+        #if DISK_MONITOR
+        guard plist["AssociatedBundleIdentifiers"] as? [String] == [HelperIdentity.containerID] else {
+            throw invalid("Scanner must belong to Disk Monitor")
+        }
+        #endif
     }
     static func validate(at bundle: URL) throws {
         try validateMetadata(at: bundle)
-        for (path, identifier) in [(bundle, HelperIdentity.appID), (bundle.appendingPathComponent("Contents/MacOS/Scanner"), HelperIdentity.serviceID)] {
+        for (path, identifier) in [(bundle.appendingPathComponent("Contents/MacOS/" + HelperIdentity.clientName), HelperIdentity.appID), (bundle.appendingPathComponent("Contents/MacOS/Scanner"), HelperIdentity.serviceID)] {
             var code: SecStaticCode?
             var requirement: SecRequirement?
             guard SecStaticCodeCreateWithPath(path as CFURL, [], &code) == errSecSuccess,

@@ -15,6 +15,10 @@ final class SpotlightAccess: ObservableObject {
     private var waitingForSettings = false
     private var activationObserver: NSObjectProtocol?
     var onReady: (() -> Void)?
+    var onGeneralPermissionReturn: (() -> Void)?
+    @Published private(set) var generalFolder: String?
+    func openGeneralAccess(for name: String) { generalFolder = name; openSetup() }
+    func closeGeneralAccess() { generalFolder = nil; window?.close() }
     @Published var needsAccess = false
     @Published var packageValid = false
     @Published var registration: Int = 0
@@ -41,7 +45,7 @@ final class SpotlightAccess: ObservableObject {
     private var started: TimeInterval = 0
     private var measuring = false
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
-    private var host: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Library/Scanner/Disk Monitor Scanner.app") }
+    private var host: URL { Bundle.main.bundleURL }
     var canAutomaticallyMeasure: Bool {
         enabled && ready && packageValid && registration == 1 && failure == nil && !needsAccess && !uncertain
     }
@@ -63,6 +67,9 @@ final class SpotlightAccess: ObservableObject {
         timer?.invalidate()
     }
     func returnedToApp() {
+        if waitingForSettings, generalFolder != nil {
+            waitingForSettings = false; onGeneralPermissionReturn?(); return
+        }
         guard waitingForSettings, enabled, !busy, !reconciling, !uncertain else { return }
         waitingForSettings = false
         setEnabled(true)
@@ -90,7 +97,7 @@ final class SpotlightAccess: ObservableObject {
             do { try BundlePolicy.validate(at: host) }
             catch { deliver(BridgeMessage(event: "packageFailed", error: "Scanner package is unavailable or has an unexpected signature")); return }
             let process = Process()
-            process.executableURL = host.appendingPathComponent("Contents/MacOS/Bridge")
+            process.executableURL = host.appendingPathComponent("Contents/MacOS/" + HelperIdentity.clientName)
             process.arguments = [operation]
             process.currentDirectoryURL = URL(fileURLWithPath: "/")
             process.environment = ["PATH": "/usr/bin:/bin", "LC_ALL": "C"]
@@ -122,7 +129,7 @@ final class SpotlightAccess: ObservableObject {
         if !busy { describeSetup() }
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 340), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "Disk Monitor — Spotlight access"
+            window.title = "Disk Monitor — folder access"
             window.appearance = NSAppearance(named: .darkAqua)
             window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: ProtectedFolderSetup(access: self))
@@ -132,7 +139,10 @@ final class SpotlightAccess: ObservableObject {
         startTimer()
     }
     private func describeSetup() {
-        if uncertain {
+        if let generalFolder {
+            title = "Allow access to " + generalFolder
+            detail = "Allow Disk Monitor in System Settings → Privacy & Security → Full Disk Access. Drag the app icon below into that list. Return to Disk Monitor to continue the requested scan. This grants broad disk access; some system restrictions may still apply."
+        } else if uncertain {
             title = "Restart your Mac before scanning again"
             detail = "The previous scanner request has no confirmed completion. Saved measurements are kept and new scans are paused. Restart your Mac to ensure the old scan has stopped; reopening Disk Monitor alone does not clear this state."
         } else if !packageValid {
@@ -143,10 +153,10 @@ final class SpotlightAccess: ObservableObject {
             detail = failure + ". Your saved measurement is kept. You can retry using Spotlight’s refresh arrow."
         } else if needsAccess {
             title = "Allow Spotlight measurement"
-            detail = "In System Settings → Privacy & Security → Full Disk Access, allow Disk Monitor Scanner if you choose. This grants broad disk access. Drag the icon below into that list. Return to Disk Monitor afterward; it will check access and continue automatically. Some system protections may still prevent measurement."
+            detail = "In System Settings → Privacy & Security → Full Disk Access, allow Disk Monitor if you choose. This grants broad disk access. Drag the icon below into that list. Return to Disk Monitor afterward; it will check access and continue automatically. Some system protections may still prevent measurement."
         } else if registration == 2 {
             title = "Allow Spotlight measurement"
-            detail = "Open Login Items & Extensions and turn ON Disk Monitor Scanner under Allow in the Background. This is Disk Monitor’s internal Spotlight scanner. Return to Disk Monitor to continue automatically."
+            detail = "Open Login Items & Extensions and turn ON Disk Monitor under Allow in the Background. This is Disk Monitor’s internal Spotlight scanner. Return to Disk Monitor to continue automatically."
         } else if registration == 1 {
             title = ready ? "Spotlight is ready" : "Checking Spotlight access"
             detail = "Spotlight uses your folder scan schedule. You can also use its refresh arrow. Turn off Spotlight in Settings to stop tracking and unregister its scanner."
@@ -178,6 +188,8 @@ final class SpotlightAccess: ObservableObject {
                     self.finishReconciliation(); self.window?.close()
                 }
                 else { self.removeRegistration() }
+            } else if (self.registration == 1 || self.registration == 2) && !self.preferences.bool(forKey: "scannerRegisteredInMainBundle") {
+                self.restartRegistration()
             } else if self.registration == 2 {
                 self.startTimer(); self.finishReconciliation(showSetup: true)
             } else if self.registration == 1 {
@@ -194,10 +206,15 @@ final class SpotlightAccess: ObservableObject {
             if self.activeRevision != self.lifecycleRevision {
                 self.finishReconciliation()
             } else if let error = reply.error {
-                self.failure = error
-                self.finishReconciliation(showSetup: true)
-            } else if self.registration == 1 { self.validateAccess() }
-            else if self.registration == 2 { self.startTimer(); self.finishReconciliation(showSetup: true) }
+                if !self.attemptedRecovery { self.restartRegistration() }
+                else { self.failure = error; self.finishReconciliation(showSetup: true) }
+            } else if self.registration == 1 {
+                self.preferences.set(true, forKey: "scannerRegisteredInMainBundle")
+                self.validateAccess()
+            } else if self.registration == 2 {
+                self.preferences.set(true, forKey: "scannerRegisteredInMainBundle")
+                self.startTimer(); self.finishReconciliation(showSetup: true)
+            }
             else {
                 self.failure = "macOS could not enable Spotlight measurement"
                 self.finishReconciliation(showSetup: true)
@@ -272,7 +289,7 @@ final class SpotlightAccess: ObservableObject {
     }
     func willOpenPermissionSettings(fullDiskAccess: Bool = false) {
         waitingForSettings = true
-        if fullDiskAccess { restartAfterPermission = true }
+        if fullDiskAccess && (generalFolder == nil || needsAccess) { restartAfterPermission = true }
     }
     func openApproval() {
         willOpenPermissionSettings()
@@ -385,7 +402,13 @@ struct ProtectedFolderSetup: View {
         VStack(alignment: .leading, spacing: 18) {
             Text(access.title).font(.title2.bold())
             Text(access.detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if access.uncertain {
+            if access.generalFolder != nil {
+                HStack {
+                    Image(nsImage: access.permissionIcon).resizable().frame(width: 48, height: 48)
+                    Text("Disk Monitor").font(.body.bold())
+                }.onDrag { access.permissionDragItem() }
+                Button("Open Full Disk Access…") { access.openDiskAccess() }
+            } else if access.uncertain {
                 Text("You can quit Disk Monitor, then restart your Mac from the Apple menu.")
                 Button("Quit Disk Monitor") { NSApp.terminate(nil) }
             } else if access.reconciling {
@@ -399,10 +422,10 @@ struct ProtectedFolderSetup: View {
                 } else if access.needsAccess {
                     HStack {
                         Image(nsImage: access.permissionIcon).resizable().frame(width: 48, height: 48)
-                        Text("Disk Monitor Scanner").font(.body.bold())
+                        Text("Disk Monitor").font(.body.bold())
                     }
                     .onDrag { access.permissionDragItem() }
-                    .accessibilityLabel("Drag Disk Monitor Scanner to Full Disk Access")
+                    .accessibilityLabel("Drag Disk Monitor to Full Disk Access")
                     Button("Open Full Disk Access…") { access.openDiskAccess() }
                 } else if access.registration == 2 {
                     Button("Open approval settings…") { access.openApproval() }

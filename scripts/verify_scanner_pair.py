@@ -1,8 +1,17 @@
-"""Validate nested scanner identity continuity; never installs or registers."""
+"""Check internal helper identity continuity without registration or installation."""
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
-
-relative = 'Contents/Library/Scanner/Disk Monitor Scanner.app'
-subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'HelperPrototype/verify_replacement.py'),
-                str(Path(sys.argv[1]) / relative), str(Path(sys.argv[2]) / relative)], check=True)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'HelperPrototype'))
+from verify_replacement import checked, requirement
+old, new = map(Path, sys.argv[1:])
+metadata = [plistlib.loads((app / 'Contents/Info.plist').read_bytes()) for app in (old, new)]
+assert metadata[0]['CFBundleIdentifier'] == metadata[1]['CFBundleIdentifier'] == 'local.darien.diskmonitor'
+assert int(metadata[1]['CFBundleVersion']) > int(metadata[0]['CFBundleVersion'])
+for name in ('Scanner', 'ScannerBridge'):
+    before, after = [app / 'Contents/MacOS' / name for app in (old, new)]
+    for path in (before, after):
+        checked(['codesign', '--verify', '--strict', str(path)])
+    checked(['codesign', '--verify', '--strict', '-R', '=' + requirement(before), str(after)])
+print('PASS: app identity, increasing build and pinned internal helper identities retained')

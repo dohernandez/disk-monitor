@@ -10,7 +10,7 @@ build.mkdir(parents=True, exist_ok=True)
 identity = build / 'FixtureScannerIdentity.swift'
 identity.write_text('let signingCertificateSHA1 = "' + '0' * 40 + '"\nlet scannerBuildNumber = "fixture"\n')
 source = root / 'HelperPrototype'
-args = ['xcrun', 'swiftc', '-swift-version', '5', '-target', platform.machine() + '-apple-macos15.0', '-parse-as-library',
+args = ['xcrun', 'swiftc', '-D', 'DISK_MONITOR', '-swift-version', '5', '-target', platform.machine() + '-apple-macos15.0', '-parse-as-library',
         '-vfsoverlay', str(build / 'toolchain-overlay.json'), '-Xcc', '-ivfsoverlay', '-Xcc', str(build / 'toolchain-overlay.json'),
         '-module-cache-path', str(build / 'scanner-fixture-modules')]
 args += [str(source / name) for name in ['Shared.swift', 'RequestState.swift', 'RecoveryState.swift', 'BundlePolicy.swift', 'Measurement.swift', 'Tests.swift']]
@@ -28,3 +28,16 @@ for name, files in [
     subprocess.run(base + ['-D', 'DISK_MONITOR'] + [str(source / file) for file in files]
                    + [str(identity), '-framework', 'ServiceManagement', '-o', str(build / name)], check=True)
 print('PASS: production scanner and bridge compile without signing, registration or execution')
+
+# Prove that a non-primary executable resolves the enclosing main app bundle.
+# This explicit entry point never constructs SMAppService or connects to a daemon.
+import tempfile, plistlib, shutil
+with tempfile.TemporaryDirectory(prefix='scanner-container-') as directory:
+    app = Path(directory) / 'Disk Monitor.app'
+    macos = app / 'Contents/MacOS'
+    macos.mkdir(parents=True)
+    (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+        'CFBundleIdentifier': 'local.darien.diskmonitor', 'CFBundleExecutable': 'DiskMonitor',
+        'CFBundlePackageType': 'APPL'}))
+    shutil.copy2(build / 'bridge-compile-check', macos / 'ScannerBridge')
+    subprocess.run([str(macos / 'ScannerBridge'), '--bundle-self-test'], check=True, timeout=10)

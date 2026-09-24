@@ -221,18 +221,22 @@ final class Model: ObservableObject {
     @Published var errors: [String: String] = [:]
     @Published var lastMeasuredAt: Date?
     let scanner = Scanner()
-    private var pendingSpotlightRefresh = false
-    lazy var spotlightAccess: SpotlightAccess = {
-        let access = SpotlightAccess(preferences: preferences)
-        access.onReady = { [weak self] in
-            DispatchQueue.main.async { self?.resumeSpotlightRefresh() }
+    private var pendingAccessScans: [String: Root] = [:]
+    lazy var spotlightAccess = SpotlightAccess(preferences: preferences)
+    lazy var folderAccess: FolderAccess = {
+        let access = FolderAccess(spotlight: spotlightAccess)
+        access.onGranted = { [weak self] roots in
+            guard let self else { return }
+            for root in roots { self.pendingAccessScans[root.path] = root }
+            DispatchQueue.main.async { self.resumeAccessScans() }
         }
         return access
     }()
-    private func resumeSpotlightRefresh() {
-        guard pendingSpotlightRefresh, spotlightEnabled, spotlightAccess.canAutomaticallyMeasure, !scanning else { return }
-        pendingSpotlightRefresh = false
-        scan([Root(path: SpotlightMeasurement.path, title: "Spotlight index")], manualSpotlight: true)
+    private func resumeAccessScans() {
+        guard !scanning, !pendingAccessScans.isEmpty else { return }
+        let roots = pendingAccessScans.values.filter { root in trackedRoots.contains { $0.path == root.path } }
+        pendingAccessScans.removeAll()
+        if !roots.isEmpty { scan(Array(roots)) }
     }
     let home: String
     @Published var projects: [Root]?
@@ -297,7 +301,7 @@ final class Model: ObservableObject {
     func scheduleTimers() {
         timer?.invalidate(); folderTimer?.invalidate()
         timer = Timer(timeInterval: TimeInterval(diskInterval), repeats: true) { [weak self] _ in self?.refreshCapacity() }
-        folderTimer = Timer(timeInterval: TimeInterval(folderInterval), repeats: true) { [weak self] _ in self?.scanAllFolders() }
+        folderTimer = Timer(timeInterval: TimeInterval(folderInterval), repeats: true) { [weak self] _ in self?.scanAllFolders(requestAccess: false) }
         RunLoop.main.add(timer!, forMode: .common)
         RunLoop.main.add(folderTimer!, forMode: .common)
     }
@@ -320,17 +324,17 @@ final class Model: ObservableObject {
     var spotlightEnabled: Bool { trackedRoots.contains { $0.path == spotlightPath } }
     func startFolderMonitoring() {
         guard spotlightPath == SpotlightMeasurement.path else { scanMissingRoots(); return }
-        pendingSpotlightRefresh = spotlightEnabled && (readings[spotlightPath].map { Date().timeIntervalSince($0.date) >= TimeInterval(folderInterval) } ?? true)
+        _ = folderAccess
         spotlightAccess.setEnabled(spotlightEnabled) { [weak self] in self?.scanMissingRoots() }
     }
     func setCacheEnabled(_ root: Root, _ enabled: Bool) {
         if !enabled { stopTracking(root.path); return }
         excludedPaths.remove(root.path); extras.removeAll { $0.path == root.path }
         save(); onStatus?()
-        if root.path == SpotlightMeasurement.path { pendingSpotlightRefresh = true; spotlightAccess.setEnabled(true) }
+        scan([root], requestAccess: true)
     }
-    func scanAllFolders() {
-        scan(trackedRoots)
+    func scanAllFolders(requestAccess: Bool = true) {
+        scan(trackedRoots, requestAccess: requestAccess)
     }
     func scanMissingRoots() {
         let roots = trackedRoots
@@ -338,7 +342,7 @@ final class Model: ObservableObject {
             guard let reading = readings[root.path] else { return true }
             return Date().timeIntervalSince(reading.date) >= TimeInterval(folderInterval)
         }
-        if !missing.isEmpty { scan(missing) }
+        if !missing.isEmpty { scan(missing, requestAccess: true) }
     }
     func scanState(_ path: String) -> FolderScanState {
         guard scanning else { return .idle }
@@ -498,15 +502,9 @@ final class Model: ObservableObject {
         refreshFolder(Root(path: SpotlightMeasurement.path, title: "Spotlight index"))
     }
     func refreshFolder(_ root: Root) {
-        guard !scanning else { return }
-        if root.path == SpotlightMeasurement.path {
-            pendingSpotlightRefresh = true
-            spotlightAccess.setEnabled(spotlightEnabled) { [weak self] in self?.resumeSpotlightRefresh() }
-            return
-        }
-        scan([root], manualSpotlight: true)
+        scan([root], requestAccess: true)
     }
-    func stopScan() { scanner.cancel(); if administratorMeasurement { spotlightAccess.cancel() } }
+    func stopScan() { folderAccess.cancelPending(); pendingAccessScans.removeAll(); scanner.cancel(); if administratorMeasurement { spotlightAccess.cancel() } }
     func finishSpotlight(_ result: SpotlightMeasurement.Outcome) {
         let path = SpotlightMeasurement.path
         switch result {
@@ -524,7 +522,20 @@ final class Model: ObservableObject {
         scanning = false; administratorMeasurement = false; activePath = nil; queuedPaths = []
         refreshCapacity(); onStatus?()
     }
-    func scan(_ roots: [Root], manualSpotlight: Bool = false) {
+    func scan(_ roots: [Root], requestAccess: Bool = false) {
+        guard !scanning else { return }
+        guard !spotlightAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
+        scanning = true; scanner.reset(); status = "Checking folder access…"
+        folderAccess.prepare(roots, requestIfNeeded: requestAccess) { [weak self] allowed in
+            guard let self else { return }
+            self.scanning = false
+            guard !self.scanner.isCancelled else { self.folderAccess.cancelPending(); self.status = "Scan stopped"; return }
+            guard !allowed.isEmpty else { self.status = "Folder unavailable or access required · saved sizes kept"; return }
+            for root in allowed { self.pendingAccessScans.removeValue(forKey: root.path) }
+            self.performScan(allowed, requestAccess: requestAccess)
+        }
+    }
+    private func performScan(_ roots: [Root], requestAccess: Bool) {
         guard !scanning else { return }
         guard !spotlightAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
         let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -532,8 +543,7 @@ final class Model: ObservableObject {
         let includesSpotlight = existing.contains { $0.path == SpotlightMeasurement.path }
         let useHelper = includesSpotlight && spotlightAccess.enabled && spotlightAccess.ready && spotlightAccess.packageValid && spotlightAccess.registration == 1
             && spotlightAccess.failure == nil && !spotlightAccess.needsAccess
-            && (manualSpotlight || spotlightAccess.canAutomaticallyMeasure)
-        if useHelper { pendingSpotlightRefresh = false }
+            && (requestAccess || spotlightAccess.canAutomaticallyMeasure)
         scanning = true; scanner.reset(); queuedPaths = Set(existing.map(\.path)); status = "Preparing scan…"
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
@@ -545,7 +555,7 @@ final class Model: ObservableObject {
                     guard useHelper else {
                         // Disabled/unconfigured is not evidence of a permission denial.
                         // Leave prior readings and error classification untouched.
-                        helperFailure = "Spotlight setup or scheduled measurement is not enabled"
+                        helperFailure = "Spotlight access is required"
                         continue
                     }
                     let done = DispatchSemaphore(value: 0)
@@ -579,6 +589,9 @@ final class Model: ObservableObject {
                 let result = self.scanner.scan(root.path)
                 DispatchQueue.main.sync {
                     if result.error == "Cancelled" { return }
+                    if result.protectedOnly(for: root.path) {
+                        self.folderAccess.reportDenied(root, paths: Array(result.failures.keys), requestIfNeeded: requestAccess)
+                    }
                     let affectedPaths = Set(result.values.keys).union(result.failures.keys).union([root.path])
                     self.protectedPaths = self.protectedPaths.filter { $0 != root.path && !$0.hasPrefix(root.path + "/") }
                     for path in affectedPaths {
@@ -606,10 +619,9 @@ final class Model: ObservableObject {
             DispatchQueue.main.async {
                 self.scanning = false; self.activePath = nil; self.queuedPaths = []; self.refreshCapacity()
                 self.status = self.scanner.isCancelled ? "Scan stopped · previous readings kept" : helperFailure != nil ? "Spotlight needs attention · saved size kept" : "Scan finished · \(Date().formatted(date: .omitted, time: .shortened))"
-                if manualSpotlight && self.spotlightAccess.needsAccess { self.pendingSpotlightRefresh = true }
-                if self.scanner.isCancelled { self.pendingSpotlightRefresh = false }
-                else { self.resumeSpotlightRefresh() }
-                if manualSpotlight && !self.scanner.isCancelled && helperFailure != nil &&
+                if self.scanner.isCancelled { self.folderAccess.cancelPending(); self.pendingAccessScans.removeAll() }
+                else { self.resumeAccessScans() }
+                if requestAccess && !self.scanner.isCancelled && helperFailure != nil &&
                     (self.spotlightAccess.needsAccess || self.spotlightAccess.failure != nil) {
                     self.spotlightAccess.openSetup()
                 }
@@ -623,7 +635,8 @@ final class Model: ObservableObject {
         extras.removeAll { $0.path == path }
         if project.path == path { projectPath = nil }
         save(); onStatus?()
-        if path == SpotlightMeasurement.path { pendingSpotlightRefresh = false; spotlightAccess.setEnabled(false) }
+        folderAccess.cancel(path); pendingAccessScans.removeValue(forKey: path)
+        if path == SpotlightMeasurement.path { spotlightAccess.setEnabled(false) }
     }
     func setProjects(_ path: String) {
         if project.path != path { excludedPaths.insert(project.path) }
@@ -1007,8 +1020,8 @@ struct Dashboard: View {
                         Divider()
                         Text("Folders protected by macOS").font(.headline).foregroundStyle(Palette.primary)
                         Text("Protected by macOS means a permission restriction prevented a complete measurement; it does not mean the folder is empty. Partial · protected contents shows only the readable portion. Earlier complete sizes keep their original measurement date.")
-                        Text("For any affected folder, check System Settings → Privacy & Security → Full Disk Access for Disk Monitor. If you choose to allow access, reopen the app and refresh that folder. Full Disk Access grants broad access and may not unlock every system-owned folder.")
-                        Text("When Spotlight is enabled, Disk Monitor checks its scanner approval and access at app startup and when you turn its toggle on. Updates restart the app and use that same check. Missing permissions open setup guidance. Turning Spotlight off also unregisters its scanner. Other protected folders use the Full Disk Access guidance above.")
+                        Text("For any affected folder, check System Settings → Privacy & Security → Full Disk Access for Disk Monitor. After allowing access, return to Disk Monitor to continue the requested scan. Full Disk Access grants broad access and may not unlock every system-owned folder.")
+                        Text("When Spotlight is enabled, Disk Monitor checks its scanner approval and access at app startup and when you turn its toggle on. Updates restart the app and use that same check. Missing permissions open setup guidance. Turning Spotlight off also unregisters its scanner. Every folder passes through the same access check before scanning; missing access opens the relevant permission steps.")
                         Text("Adding a folder never grants administrator access. Some system folders need a separately supported measurement method and may remain protected. Disk Monitor never changes folder permissions or deletes monitored files.")
                     }.font(.system(size: 12)).foregroundStyle(Palette.secondary).padding(20)
                 }
@@ -1175,8 +1188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationWillTerminate(_ notification: Notification) { stopDismissMonitors(); model.scanner.cancel() }
 }
 if CommandLine.arguments.contains("--scanner-package-self-test") {
-    let host = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/Scanner/Disk Monitor Scanner.app")
-    do { try BundlePolicy.validate(at: host); print("PASS: nested scanner package and pinned signatures") }
+    let host = Bundle.main.bundleURL
+    do { try BundlePolicy.validate(at: host); print("PASS: internal scanner executables and pinned signatures") }
     catch { fputs("Scanner package validation failed\n", stderr); exit(1) }
     exit(0)
 }
@@ -1418,6 +1431,7 @@ if CommandLine.arguments.contains("--self-test") {
     func answerLifecycle(_ event: String, _ status: Int) {
         lifecycleReplies.removeFirst()(BridgeMessage(event: event, status: status))
     }
+    prefs.set(true, forKey: "scannerRegisteredInMainBundle")
     // One toggle registers and asks only for the macOS approval that is missing.
     lifecycle.setEnabled(true)
     answerLifecycle("status", 3); answerLifecycle("status", 2)
@@ -1505,12 +1519,53 @@ if CommandLine.arguments.contains("--self-test") {
     recovery.setEnabled(false); answerRecovery("status", 3); answerRecovery("status", 3)
     precondition(!recovery.enabled && recoveryOps.last == "status" && recoveryReplies.isEmpty)
     precondition(!recoveryOps.contains("measure"), "Permission/recovery fixtures never request a real scan")
+    // Upgrading the old nested registration refreshes ownership once, inside the access module.
+    prefs.removeObject(forKey: "scannerRegisteredInMainBundle")
+    recovery.setEnabled(true); answerRecovery("status", 1)
+    precondition(recoveryOps.last == "unregister")
+    answerRecovery("status", 3); answerRecovery("status", 1); answerRecovery("access", 0)
+    precondition(prefs.bool(forKey: "scannerRegisteredInMainBundle") && recovery.ready)
     // A permission failure during a size request cannot immediately retry itself.
     recovery.setEnabled(true); answerRecovery("status", 1); answerRecovery("access", 0)
     recovery.measure { _ in }
     recoveryReplies.removeFirst()(BridgeMessage(event: "result", measurement: .failed("Full Disk Access required")))
     precondition(recovery.needsAccess && !recovery.ready && !recovery.canAutomaticallyMeasure)
     recovery.setEnabled(false); answerRecovery("status", 1); answerRecovery("status", 3)
+    // Every ordinary folder uses the same gate; no privileged operation is requested.
+    var ordinaryPrompts = 0
+    let ordinaryPresenter = SpotlightAccess(preferences: prefs, operation: { _, _ in
+        preconditionFailure("Ordinary folders must never use privileged IPC")
+    }, presentSetup: { ordinaryPrompts += 1 })
+    var permissionState: FolderAccess.Check = .available
+    let gate = FolderAccess(spotlight: ordinaryPresenter, probe: { _ in permissionState })
+    let ordinaryRoot = Root(path: root.appendingPathComponent("ordinary").path, title: "Ordinary fixture")
+    func prepareOrdinary(_ interactive: Bool) -> [Root] {
+        var result: [Root]?
+        gate.prepare([ordinaryRoot], requestIfNeeded: interactive) { result = $0 }
+        let deadline = Date().addingTimeInterval(5)
+        while result == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        precondition(result != nil); return result!
+    }
+    precondition(prepareOrdinary(true).count == 1 && ordinaryPrompts == 0)
+    permissionState = .permissionRequired
+    precondition(prepareOrdinary(false).isEmpty && ordinaryPrompts == 0)
+    precondition(prepareOrdinary(true).isEmpty && ordinaryPrompts == 1)
+    var resumedOrdinary: [Root] = []
+    gate.onGranted = { resumedOrdinary = $0 }
+    permissionState = .available
+    ordinaryPresenter.willOpenPermissionSettings(fullDiskAccess: true); ordinaryPresenter.returnedToApp()
+    let accessDeadline = Date().addingTimeInterval(5)
+    while resumedOrdinary.isEmpty && Date() < accessDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    precondition(resumedOrdinary.map(\.path) == [ordinaryRoot.path])
+    permissionState = .failed("I/O error")
+    precondition(prepareOrdinary(true).isEmpty && ordinaryPrompts == 1, "I/O errors are not permission requests")
+    permissionState = .permissionRequired
+    var cancelledPreparation: [Root]?
+    gate.prepare([ordinaryRoot], requestIfNeeded: true) { cancelledPreparation = $0 }
+    gate.cancel(ordinaryRoot.path)
+    let cancelDeadline = Date().addingTimeInterval(5)
+    while cancelledPreparation == nil && Date() < cancelDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    precondition(cancelledPreparation?.isEmpty == true && ordinaryPrompts == 1)
     let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)
@@ -1560,6 +1615,9 @@ if CommandLine.arguments.contains("--self-test") {
     spotlightModel.readings[spotlightFolder.path] = Reading(bytes: 48*gib, date: Date())
     precondition(spotlightModel.largestFolders.contains { $0.path == spotlightFolder.path })
     spotlightModel.stopTracking(spotlightFolder.path)
+    let stopTrackingDeadline = Date().addingTimeInterval(5)
+    while spotlightModel.scanning && Date() < stopTrackingDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    precondition(!spotlightModel.scanning, "Stopping tracking cancels the pending access check")
     precondition(!spotlightModel.caches.contains { $0.path == spotlightFolder.path })
     let spotlightReloaded = Model(home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
     precondition(spotlightReloaded.defaultCacheOptions.contains { $0.path == spotlightFolder.path })

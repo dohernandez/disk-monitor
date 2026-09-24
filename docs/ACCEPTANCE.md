@@ -210,3 +210,17 @@ return from background approval, no activation loop, and off during replacement.
 Manual acceptance still required: update from 1.7.2 with Spotlight enabled, approve
 only missing OS permissions, return to the app and observe one resumed measurement.
 No separate repair, registration or verification buttons should appear.
+
+## Shared folder access and single app bundle
+
+- Readable ordinary folder: scan without a permission prompt or privileged IPC.
+- Access denied: request only when interactive; continue after access is available.
+- Recheck denied descendants, not just their readable parent; non-permission errors
+  do not trigger permission requests. Cancellation/stop-tracking wins over late checks.
+- Spotlight follows the same gate; its fixed privileged backend remains internal.
+- Installer contains no Contents/Library/Scanner or Disk Monitor Scanner.app.
+- Both internal executables retain pinned signatures after installer re-signing.
+- ScannerBridge resolves the main app bundle in its no-IPC bundle fixture.
+- Live acceptance: upgrade 1.7.2, check old registration replacement, allow Disk Monitor
+  only as required by macOS, and verify both ordinary and Spotlight measurement.
+  CI and static fixtures do not establish macOS permission attribution or migration.

@@ -39,13 +39,16 @@ import Security
         let macos = package.appendingPathComponent("Contents/MacOS")
         try fm.createDirectory(at: daemonDir, withIntermediateDirectories: true)
         try fm.createDirectory(at: macos, withIntermediateDirectories: true)
-        let info: [String: Any] = ["CFBundleIdentifier": HelperIdentity.appID]
+        let info: [String: Any] = ["CFBundleIdentifier": HelperIdentity.containerID]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: package.appendingPathComponent("Contents/Info.plist"))
         let executable = macos.appendingPathComponent("Scanner")
         try Data("fixture only".utf8).write(to: executable)
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let client = macos.appendingPathComponent(HelperIdentity.clientName)
+        try Data("fixture client".utf8).write(to: client)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: client.path)
         let plistURL = daemonDir.appendingPathComponent(HelperIdentity.serviceID + ".plist")
-        var daemon: [String: Any] = ["Label": HelperIdentity.serviceID, "BundleProgram": "Contents/MacOS/Scanner", "MachServices": [HelperIdentity.serviceID: true]]
+        var daemon: [String: Any] = ["Label": HelperIdentity.serviceID, "BundleProgram": "Contents/MacOS/Scanner", "MachServices": [HelperIdentity.serviceID: true], "AssociatedBundleIdentifiers": [HelperIdentity.containerID]]
         func writeDaemon() throws { try PropertyListSerialization.data(fromPropertyList: daemon, format: .xml, options: 0).write(to: plistURL) }
         try writeDaemon()
         try BundlePolicy.validateMetadata(at: package)

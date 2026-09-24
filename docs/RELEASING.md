@@ -185,16 +185,17 @@ key independently.
 `SCANNER_SIGNING_SHA1` is an optional public certificate fingerprint for isolated
 build validation, not a credential. When absent, the build contains no privileged
 scanner and cannot register one. When present, the signer must already be available
-in the build keychain. The nested Disk Monitor Scanner.app and its helper are signed
-inside-out with hardened runtime and no library-validation exemption. The parent
+in the build keychain. The internal ScannerBridge and Scanner executables are signed with hardened runtime and no library-validation exemption. The parent
 app keeps its existing signing policy and updater.
 
 Never place the scanner private key on runtime Macs, commit it or expose it to PR
 jobs. A dedicated stable release key must be provisioned before enabling this
 feature in releases. Prototype keys are temporary
 and retired; they are not release identities. The installer may re-sign only the
-outer ad-hoc app and must preserve and verify the nested scanner's signature.
-The legacy direct-in-main-app helper layout is rejected by packaging.
+outer ad-hoc app and must preserve and verify both internal executable signatures.
+The obsolete nested scanner app layout is rejected by packaging. The client’s
+--bundle-self-test checks that it resolves Disk Monitor as its containing app without
+registering, connecting to a service or requesting access.
 
 Run scripts/test_scanner_build.py and, for an isolated signed build,
 `DiskMonitor --scanner-package-self-test` before any installer acceptance. Neither

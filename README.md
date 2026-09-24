@@ -183,6 +183,7 @@ index cleanup is performed. The Spotlight toggle enables tracking and its scanne
 it while running check macOS approval and access; missing permissions open guidance.
 Turning it off unregisters the scanner. Refresh also checks access before measuring.
 Returning from permission settings continues the pending scan automatically; no separate
-scanner setup or manual repair sequence is required. Other protected folders
-use the general Full Disk Access guidance in Info. Release packages include the signed
+scanner setup or manual repair sequence is required. Every folder uses the shared
+access check and requests missing permissions before scanning. There is one Disk
+Monitor app; protected access is handled by internal executables. Release packages include the signed
 scanner; local unsigned builds cannot enable it. See [usage details](docs/USAGE.md#spotlight-index-tracking).

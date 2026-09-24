@@ -257,7 +257,22 @@ New installations start with Spotlight off; existing saved selections are preser
 Enabling Spotlight also includes it in the normal folder scan schedule: no second
 scanner or scheduled-measurement switch exists. The row refresh rechecks access
 before a manual measurement. There is no separate scanner setup control in Settings.
-Other tracked folders continue to use the ordinary unprivileged scanner.
+Every folder passes through `FolderAccess.prepare` before scanning. It checks read
+access (including previously denied child directories), requests missing access for
+interactive scans, and resumes pending folders when access is granted. Ordinary
+folders never use privileged IPC. The fixed Spotlight backend is selected internally
+by the access module; no arbitrary folder path is sent to the privileged helper.
+Background refreshes do not repeatedly open permission prompts. A failed or denied
+check never replaces a saved size with zero.
+
+There is one app bundle: Disk Monitor.app. Scanner and ScannerBridge are internal
+executables in Contents/MacOS; the daemon plist and its AssociatedBundleIdentifiers
+belong to Disk Monitor. Full Disk Access is granted to Disk Monitor itself. The old
+nested Disk Monitor Scanner.app is absent from new installers. On the first enabled
+startup after this layout change, an existing registration is refreshed once through
+SMAppService before access is checked. The updater replaces the old app bundle;
+users do not delete internal components. macOS may retain historical permission
+entries; the application does not reset the system permission databases.
 
 The startup access check uses a versioned, authenticated, argument-free IPC operation
 that opens only the fixed Spotlight directory and its fixed ancestors. It does not

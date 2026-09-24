@@ -70,11 +70,13 @@ class ScannerBuildTests(unittest.TestCase):
             self.assertNotEqual(generate('invalid').returncode, 0)
             self.assertFalse((root / 'Disk Monitor.app').exists())
             self.assertEqual(generate('A' * 40).returncode, 0)
-            config = root / 'Disk Monitor.app/Contents/Library/Scanner/Disk Monitor Scanner.app/Contents/Library/LaunchDaemons/local.darien.diskmonitor.scanner.service.plist'
+            config = root / 'Disk Monitor.app/Contents/Library/LaunchDaemons/local.darien.diskmonitor.scanner.service.plist'
             value = plistlib.loads(config.read_bytes())
             self.assertEqual(value['BundleProgram'], 'Contents/MacOS/Scanner')
             self.assertEqual(value['MachServices'], {'local.darien.diskmonitor.scanner.service': True})
             self.assertNotIn('ProgramArguments', value)
+            self.assertEqual(value['AssociatedBundleIdentifiers'], ['local.darien.diskmonitor'])
+            self.assertFalse((root / 'Disk Monitor.app/Contents/Library/Scanner').exists())
 
     def test_release_packager_cannot_erase_scanner_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -83,7 +85,7 @@ class ScannerBuildTests(unittest.TestCase):
             executable = app / 'Contents/MacOS/Scanner'
             executable.parent.mkdir(parents=True)
             executable.write_text('fixture only')
-            with self.assertRaisesRegex(ValueError, 'pinned signature'):
+            with self.assertRaisesRegex(ValueError, 'Incomplete internal scanner'):
                 package(app, '1.0.0', '1', root / 'out')
             self.assertFalse((root / 'out').exists())
 
