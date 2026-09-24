@@ -17,3 +17,14 @@ args += [str(source / name) for name in ['Shared.swift', 'RequestState.swift', '
 args += [str(identity), '-o', str(build / 'scanner-fixtures')]
 subprocess.run(args, check=True)
 subprocess.run([str(build / 'scanner-fixtures')], check=True, timeout=60)
+
+# Compile production IPC endpoints too: unsigned PR builds do not bundle them.
+# Compilation never registers or executes these binaries.
+base = args[:args.index(str(source / 'Shared.swift'))]
+for name, files in [
+    ('scanner-compile-check', ['Shared.swift', 'Measurement.swift', 'Helper.swift']),
+    ('bridge-compile-check', ['Shared.swift', 'BridgeProtocol.swift', 'Bridge.swift']),
+]:
+    subprocess.run(base + ['-D', 'DISK_MONITOR'] + [str(source / file) for file in files]
+                   + [str(identity), '-framework', 'ServiceManagement', '-o', str(build / name)], check=True)
+print('PASS: production scanner and bridge compile without signing, registration or execution')

@@ -20,6 +20,18 @@ final class SpotlightScanner {
         // macOS returns 0 for an entry, -1 at end. Reject any extended ACL.
         return acl_get_entry(acl, Int32(ACL_FIRST_ENTRY.rawValue), &entry) == -1 && errno == EINVAL
     }
+    // Fixed metadata-only preflight: 0 readable, 1 permission denied, 2 safety/unavailable.
+    // No traversal, size measurement, credentials, or caller-selected path.
+    static func accessStatus() -> Int {
+        guard geteuid() == 0 else { return 2 }
+        for path in ancestors {
+            let fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+            guard fd >= 0 else { return errno == EACCES || errno == EPERM ? 1 : 2 }
+            close(fd)
+            guard safeDirectory(path) else { return 2 }
+        }
+        return 0
+    }
     static func parse(_ data: Data, expectedPath: String = target) -> Int64? {
         guard data.count < 256, let text = String(data: data, encoding: .utf8) else { return nil }
         let fields = text.trimmingCharacters(in: .newlines).split(separator: "\t", omittingEmptySubsequences: false)

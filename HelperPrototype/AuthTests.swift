@@ -4,7 +4,8 @@ final class FixtureService: NSObject, SpotlightService {
     let lock = NSLock()
     var count = 0
     func cancel(withReply reply: @escaping (Bool) -> Void) { reply(false) }
-    func ping(withReply reply: @escaping (Int) -> Void) { reply(1) }
+    func ping(withReply reply: @escaping (Int) -> Void) { reply(2) }
+    func checkAccess(withReply reply: @escaping (Int) -> Void) { reply(0) }
     func measure(withReply reply: @escaping (Data) -> Void) {
         lock.lock(); count += 1; lock.unlock()
         reply(Data("fixture".utf8))

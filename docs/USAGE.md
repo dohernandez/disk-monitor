@@ -197,16 +197,29 @@ Release packaging requires the signed scanner; missing credentials or a missing
 scanner fail the release instead of publishing an incomplete app. Local unsigned
 builds remain supported and explicitly report scanner unavailability.
 
-Click the Spotlight row’s **Refresh** arrow to measure. It waits for a fresh scanner
-availability check and opens guided setup when approval or access is missing.
-A manual scan that finds missing access opens setup; scheduled scans never do.
-**Settings → Tracked folders → Spotlight scanner settings…** manages approval and
-scheduled measurement. The idle folder row has no separate setup link.
-Setup validates the app/helper signatures before registration. Enable is an
-explicit user action; scheduled scans never register, authorize or open settings.
-After background approval and Full Disk Access as needed, use the row refresh to
-verify and measure. Scheduled Spotlight measurement is a separate opt-in toggle.
+**Settings → Tracked folders → Spotlight index** is the single control for both
+tracking and the background scanner. Turning it on registers the signed scanner,
+checks background approval and tests fixed-directory read access. Turning it off
+cancels any owned measurement before unregistering, keeping saved measurements.
+A late registration/check response cannot override a newer toggle choice.
+
+At application startup, the persisted Spotlight selection is reconciled with macOS
+and access is checked again. An update restarts the app and therefore uses this same
+startup path; there is no separate update trigger. A recent saved measurement never
+skips the access check. Enabling Spotlight while the app is running does the same
+check immediately. When permission is missing, setup explains it and offers System
+Settings. Already-granted access does not show another prompt.
+
+New installations start with Spotlight off; existing saved selections are preserved.
+Enabling Spotlight also includes it in the normal folder scan schedule: no second
+scanner or scheduled-measurement switch exists. The row refresh rechecks access
+before a manual measurement. **Spotlight access…** in Settings opens guidance only.
 Other tracked folders continue to use the ordinary unprivileged scanner.
+
+The startup access check uses a versioned, authenticated, argument-free IPC operation
+that opens only the fixed Spotlight directory and its fixed ancestors. It does not
+walk the index or run `du`. Permission denial is distinguished from directory safety
+failure. Protocol version mismatch follows repair guidance instead of assuming access.
 
 After a launch failure, Repair guides: unregister; turn OFF only this app's
 background approval in Login Items & Extensions; register; turn approval ON; verify.
@@ -214,7 +227,7 @@ This sequence recovered the build 6 → 7 prototype on the test Mac without chan
 Full Disk Access. It is not a guarantee for every update. Never reset unrelated
 background items or grant a shared shell Full Disk Access.
 
-The helper accepts only authenticated, argument-free ping, fixed Spotlight measure
+The helper accepts only authenticated, argument-free ping, fixed access check, fixed Spotlight measure
 and own-measurement cancellation. It cannot scan arbitrary added paths. The app
 serializes this request with ordinary folder scans, retains complete saved readings
 on failure, and saves the helper's actual timestamp on success. Cooldown responses

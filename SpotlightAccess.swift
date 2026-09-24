@@ -3,7 +3,7 @@ import SwiftUI
 import ServiceManagement
 
 /// Main-thread owner of setup and the single authenticated scanner request.
-/// Registration is always an explicit button action; automatic ticks never authorize.
+/// The persisted Spotlight toggle owns registration; startup revalidates its access.
 final class SpotlightAccess: ObservableObject {
     @Published var title = "Set up protected-folder measurement"
     @Published var detail = ""
@@ -14,7 +14,13 @@ final class SpotlightAccess: ObservableObject {
     @Published var needsAccess = false
     @Published var packageValid = false
     @Published var registration: Int = 0
-    @Published var automatic = false
+    @Published private(set) var enabled = false
+    @Published private(set) var ready = false
+    @Published private(set) var reconciling = false
+    private var lifecycleCallbacks: [() -> Void] = []
+    private var lifecycleRevision = 0
+    private var activeRevision = 0
+    private let presentSetupOverride: (() -> Void)?
     @Published var uncertain = false
     private let preferences: UserDefaults
     private let pendingKey = "spotlightPendingScanBoot"
@@ -34,12 +40,12 @@ final class SpotlightAccess: ObservableObject {
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
     private var host: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Library/Scanner/Disk Monitor Scanner.app") }
     var canAutomaticallyMeasure: Bool {
-        automatic && packageValid && registration == 1 && !repair && !awaitingOff && !needsAccess && !uncertain
+        enabled && ready && packageValid && registration == 1 && !repair && !awaitingOff && !needsAccess && !uncertain
     }
-    init(preferences: UserDefaults, operation: ((String, @escaping (BridgeMessage) -> Void) -> Void)? = nil) {
+    init(preferences: UserDefaults, operation: ((String, @escaping (BridgeMessage) -> Void) -> Void)? = nil, presentSetup: (() -> Void)? = nil) {
+        self.presentSetupOverride = presentSetup
         self.operationOverride = operation
         self.preferences = preferences
-        automatic = preferences.bool(forKey: "spotlightAutomaticMeasurement")
         uncertain = ScannerRecovery.needsRecovery(pendingBoot: preferences.string(forKey: pendingKey), currentBoot: ScannerRecovery.bootSession())
         if !uncertain { preferences.removeObject(forKey: pendingKey) }
         // No registration, IPC, keychain access or scan at construction.
@@ -86,7 +92,7 @@ final class SpotlightAccess: ObservableObject {
                     guard line.count < 2048, let reply = try? JSONDecoder().decode(BridgeMessage.self, from: line) else {
                         process.terminate(); break
                     }
-                    if ["result", "status", "launchFailed", "cancelRequested"].contains(reply.event) { sawFinal = true }
+                    if ["result", "status", "access", "launchFailed", "cancelRequested"].contains(reply.event) { sawFinal = true }
                     deliver(reply)
                 }
             }
@@ -95,7 +101,7 @@ final class SpotlightAccess: ObservableObject {
         }
     }
     func openSetup() {
-        refreshAvailability()
+        if let presentSetupOverride { presentSetupOverride(); return }
         if !busy { describeSetup() }
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 430), styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -128,16 +134,93 @@ final class SpotlightAccess: ObservableObject {
             title = "Approve the scanner in macOS"
             detail = "Open Login Items & Extensions and turn ON Disk Monitor Scanner under Allow in the Background. Return here afterward."
         } else if registration == 1 {
-            title = "Verify the scanner"
-            detail = "The helper is registered. Use Refresh on the Spotlight row to check its identity and request a read-only size measurement. Other folders never receive administrator access through this scanner."
+            title = ready ? "Spotlight is ready" : "Checking Spotlight access"
+            detail = "Spotlight uses your folder scan schedule. You can also use its refresh arrow. Turn off Spotlight in Settings to stop tracking and unregister its scanner."
         } else {
-            title = "Set up protected-folder measurement"
-            detail = "The optional administrator scanner measures only Spotlight’s index. Enable registers a background helper; macOS approval and Full Disk Access may be needed. No passwords are stored, and no monitored files or permissions are changed."
+            title = enabled ? "Enabling Spotlight" : "Spotlight is disabled"
+            detail = "The Spotlight toggle in Settings controls tracking and its background scanner together. No monitored files are changed or deleted."
         }
     }
-    func setAutomatic(_ enabled: Bool) {
-        automatic = enabled
-        preferences.set(enabled, forKey: "spotlightAutomaticMeasurement")
+    /// Called only from the Spotlight toggle, persisted startup intent, or an access retry.
+    func setEnabled(_ value: Bool, completion: (() -> Void)? = nil) {
+        enabled = value; ready = false; lifecycleRevision += 1
+        if let completion { lifecycleCallbacks.append(completion) }
+        reconcile()
+    }
+    private func reconcile() {
+        guard !reconciling, !changingRegistration else { return }
+        if busy && !uncertain {
+            if !enabled { cancel() }
+            return // finish() resumes the latest intent after owned cancellation completes.
+        }
+        reconciling = true; activeRevision = lifecycleRevision
+        if (uncertain || awaitingOff) && enabled { finishReconciliation(showSetup: true); return }
+        refreshAvailability {
+            guard self.activeRevision == self.lifecycleRevision else { self.finishReconciliation(); return }
+            guard self.packageValid else { self.finishReconciliation(showSetup: self.enabled); return }
+            if !self.enabled {
+                if self.registration == 0 || self.registration == 3 {
+                    self.repair = false; self.awaitingOff = false; self.needsAccess = false
+                    self.finishReconciliation(); self.window?.close()
+                }
+                else { self.removeRegistration() }
+            } else if self.registration == 2 {
+                self.startTimer(); self.finishReconciliation(showSetup: true)
+            } else if self.registration == 1 {
+                self.validateAccess()
+            } else {
+                self.run("register") { reply in
+                    self.registration = reply.status ?? 0
+                    if let error = reply.error {
+                        self.title = "Could not enable Spotlight"; self.detail = error
+                        self.finishReconciliation(showSetup: true, preserveMessage: true)
+                    } else if self.activeRevision != self.lifecycleRevision {
+                        self.finishReconciliation()
+                    } else if self.registration == 1 { self.validateAccess() }
+                    else { self.startTimer(); self.finishReconciliation(showSetup: true) }
+                }
+            }
+        }
+    }
+    private func removeRegistration() {
+        run("unregister") { reply in
+            self.registration = reply.status ?? self.registration
+            if let error = reply.error {
+                self.title = "Could not disable Spotlight scanner"; self.detail = error
+                self.finishReconciliation(showSetup: true, preserveMessage: true)
+            } else {
+                self.repair = false; self.awaitingOff = false; self.needsAccess = false
+                self.retryAt = 0; self.cooldown = 0
+                self.finishReconciliation()
+                if !self.enabled { self.window?.close() }
+            }
+        }
+    }
+    private func validateAccess() {
+        run("check") { reply in
+            guard self.activeRevision == self.lifecycleRevision else { self.finishReconciliation(); return }
+            self.needsAccess = reply.event == "access" && reply.status == 1
+            self.repair = reply.event != "access"
+            self.ready = reply.event == "access" && reply.status == 0
+            if reply.event == "access" && reply.status != 0 && reply.status != 1 {
+                self.title = "Spotlight safety check failed"
+                self.detail = "The fixed index directory is unavailable or failed its safety checks. Changing Full Disk Access may not resolve this. Saved measurements are kept."
+                self.finishReconciliation(showSetup: true, preserveMessage: true)
+            } else { self.finishReconciliation(showSetup: !self.ready) }
+        }
+    }
+    private func finishReconciliation(showSetup: Bool = false, preserveMessage: Bool = false) {
+        reconciling = false
+        if activeRevision != lifecycleRevision { reconcile(); return }
+        if showSetup {
+            if preserveMessage { presentWindow() } else { openSetup() }
+        } else if window != nil { describeSetup() }
+        let callbacks = lifecycleCallbacks; lifecycleCallbacks.removeAll()
+        callbacks.forEach { $0() }
+    }
+    private func presentWindow() {
+        let savedTitle = title, savedDetail = detail
+        openSetup(); title = savedTitle; detail = savedDetail
     }
     func openApproval() { SMAppService.openSystemSettingsLoginItems() }
     func revealScanner() { NSWorkspace.shared.activateFileViewerSelecting([host]) }
@@ -146,21 +229,22 @@ final class SpotlightAccess: ObservableObject {
     }
     func checkSetup() {
         guard !busy, !changingRegistration else { return }
-        needsAccess = false; refreshAvailability(); describeSetup()
+        setEnabled(enabled)
     }
     func register() {
-        guard packageValid, !busy, !uncertain, !changingRegistration else { return }
+        guard enabled, packageValid, !busy, !uncertain, !changingRegistration else { return }
         changingRegistration = true
         run("register") { reply in
             self.changingRegistration = false
             if let status = reply.status { self.registration = status }
+            if !self.enabled { self.reconcile(); return }
             guard reply.status == 1 || reply.status == 2 else {
                 self.title = "Registration failed"; self.detail = reply.error ?? "Scanner registration unavailable"; return
             }
             if self.awaitingOff && reply.status != 2 {
                 self.unregister(forRepair: true); return
             }
-            self.awaitingOff = false; self.describeSetup(); self.startTimer()
+            self.awaitingOff = false; self.setEnabled(self.enabled); self.startTimer()
         }
     }
     func unregister(forRepair: Bool = false) {
@@ -168,13 +252,13 @@ final class SpotlightAccess: ObservableObject {
         changingRegistration = true
         run("unregister") { reply in
             self.changingRegistration = false
+            if !self.enabled { self.reconcile(); return }
             if let error = reply.error { self.title = "Could not remove scanner"; self.detail = error; return }
             self.registration = reply.status ?? 0
             self.repair = false; self.awaitingOff = forRepair
             self.retryAt = 0; self.cooldown = 0
             if forRepair { self.describeSetup(); self.openApproval() }
             else {
-                self.setAutomatic(false)
                 self.title = "Scanner disabled"
                 self.detail = "Background registration removed. Full Disk Access can be revoked separately in System Settings."
             }
@@ -182,7 +266,7 @@ final class SpotlightAccess: ObservableObject {
     }
     /// Caller owns the app's global scan slot. This never opens setup or requests approval.
     func measure(completion: @escaping (Measurement) -> Void) {
-        guard !busy, !uncertain, packageValid, registration == 1, !repair, !awaitingOff, !needsAccess else {
+        guard enabled, ready, !busy, !uncertain, packageValid, registration == 1, !repair, !awaitingOff, !needsAccess else {
             completion(.failed("Scanner setup required")); return
         }
         if now < retryAt, let last { completion(last); return }
@@ -239,6 +323,7 @@ final class SpotlightAccess: ObservableObject {
         }
         if repair { describeSetup() }
         callback?(result)
+        if lifecycleRevision != activeRevision || !enabled || !lifecycleCallbacks.isEmpty { reconcile() }
     }
     private func startTimer() {
         guard timer == nil else { return }
@@ -256,7 +341,11 @@ final class SpotlightAccess: ObservableObject {
                 detail = "\(elapsed / 60)m \(elapsed % 60)s elapsed. Scan budget: 15 minutes. No partial size is saved."
             }
         } else if registration == 2 && !awaitingOff && !changingRegistration {
-            refreshAvailability()
+            if enabled && !reconciling {
+                refreshAvailability {
+                    if self.enabled && self.registration == 1 { self.setEnabled(true) }
+                }
+            }
         }
     }
 
@@ -271,6 +360,8 @@ struct ProtectedFolderSetup: View {
             if access.uncertain {
                 Text("You can quit Disk Monitor, then restart your Mac from the Apple menu.")
                 Button("Quit Disk Monitor") { NSApp.terminate(nil) }
+            } else if access.reconciling {
+                ProgressView("Checking Spotlight access…")
             } else if access.busy {
                 ProgressView()
                 Button("Cancel measurement") { access.cancel() }
@@ -287,15 +378,12 @@ struct ProtectedFolderSetup: View {
                 } else if access.registration == 2 {
                     Button("Open approval settings…") { access.openApproval() }
                 } else if access.registration == 1 {
-                    Text("Return to the Spotlight row and use Refresh to verify and measure.")
-                    Toggle("Measure Spotlight during scheduled folder scans", isOn: Binding(get: { access.automatic }, set: { access.setAutomatic($0) }))
+                    Text("Spotlight is enabled in Settings and uses the folder scan schedule.")
                     if access.cooldown > 0 { Text("Next measurement available in \(access.cooldown)s").monospacedDigit() }
                 } else {
-                    Button("Enable scanner…") { access.register() }
+                    Button("Retry setup") { access.checkSetup() }
                 }
-                if access.registration == 1 || access.registration == 2 {
-                    Button("Disable scanner") { access.unregister() }
-                }
+
             }
             Spacer()
             Text("Other protected folders: see Info → Folders protected by macOS. This administrator helper accepts only the fixed Spotlight index path.").font(.caption).foregroundStyle(.secondary)

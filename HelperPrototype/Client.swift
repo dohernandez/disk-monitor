@@ -237,7 +237,7 @@ import ServiceManagement
         let proxy = c.remoteObjectProxyWithErrorHandler { _ in disconnected() } as! SpotlightService
         proxy.ping { version in DispatchQueue.main.async {
             guard self.request.accepts(id) else { return }
-            guard version == 1 else { self.finish("Incompatible scanner", "Disable the scanner before replacing this preview."); return }
+            guard version == 2 else { self.finish("Incompatible scanner", "Disable the scanner before replacing this preview."); return }
             guard self.request.connected(id, now: self.now) else { return }
             self.label.stringValue = "Measuring Spotlight"
             self.remove.title = "Cancel measurement"; self.remove.isEnabled = true
