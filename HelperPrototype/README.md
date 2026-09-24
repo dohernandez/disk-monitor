@@ -13,6 +13,7 @@ building. This is not ready for installation by other users.
 - `Client.swift`: guided preview with connection handshake and independent deadlines.
 - `RequestState.swift`: monotonic deadline and stale-response rules.
 - `Tests.swift`: disposable filesystem fixtures and request lifecycle regressions.
+- `verify_replacement.py`: read-only original-signature/build-number upgrade gate.
 - `AuthTests.swift`: signed anonymous XPC authentication tests (no root service).
 - `build.py`: isolated development signing and test build; never registers or installs.
 

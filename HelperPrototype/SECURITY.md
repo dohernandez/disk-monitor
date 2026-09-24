@@ -131,3 +131,10 @@ live upgrades still need acceptance. No security policy was relaxed.
 Apple DTS recommends comparing old and new designated requirements when diagnosing
 this class of helper upgrade failure:
 https://developer.apple.com/forums/thread/795022
+
+The next isolated acceptance series uses the distinct `spotlight-preview2` bundle
+and service IDs so a newly approved test identity is not presented as an upgrade
+to the prior identity. Two builds are prepared using the same certificate, with
+increasing build numbers. Only that pair is eligible for the next upgrade test.
+The first series is unregistered. This is a test migration, not a production update
+strategy; no broad TCC/background-item reset is used.

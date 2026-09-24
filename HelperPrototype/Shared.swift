@@ -2,8 +2,8 @@ import Foundation
 
 // Generated Identity.swift contains only a public certificate fingerprint.
 enum HelperIdentity {
-    static let appID = "local.darien.diskmonitor.spotlight-preview"
-    static let serviceID = "local.darien.diskmonitor.spotlight-preview.scanner"
+    static let appID = "local.darien.diskmonitor.spotlight-preview2"
+    static let serviceID = "local.darien.diskmonitor.spotlight-preview2.scanner"
     static func requirement(_ identifier: String) -> String {
         "identifier \"\(identifier)\" and anchor = H\"\(signingCertificateSHA1)\""
     }

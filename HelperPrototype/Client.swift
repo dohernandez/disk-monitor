@@ -24,7 +24,7 @@ import ServiceManagement
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 350), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Disk Monitor — helper setup preview"
+        window.title = "Disk Monitor — helper setup preview 2 (build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?") )"
         window.appearance = NSAppearance(named: .darkAqua)
         label.font = .boldSystemFont(ofSize: 19)
         detail.textColor = .secondaryLabelColor
@@ -162,6 +162,9 @@ import ServiceManagement
                 }
             } }
         } }
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        window.makeKeyAndOrderFront(nil); return true
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if busy { NSSound.beep(); return .terminateCancel }

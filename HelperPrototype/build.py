@@ -57,13 +57,13 @@ legacy = Path('/Library/Developer/CommandLineTools/usr/include/swift/module.modu
 roots = [{'type': 'file', 'name': str(legacy), 'external-contents': str(OUT / 'empty.modulemap')}] if legacy.exists() and legacy.with_name('bridging.modulemap').exists() else []
 (OUT / 'overlay.json').write_text(json.dumps({'version': 0, 'roots': roots}))
 base = ['xcrun', 'swiftc', '-swift-version', '5', '-target', os.uname().machine + '-apple-macos15.0', '-parse-as-library', '-O', '-vfsoverlay', str(OUT / 'overlay.json'), '-Xcc', '-ivfsoverlay', '-Xcc', str(OUT / 'overlay.json'), '-module-cache-path', str(OUT / 'modules'), str(SOURCE / 'Shared.swift'), str(SOURCE / 'RequestState.swift'), str(OUT / 'Identity.swift')]
-app = OUT / 'Disk Monitor Helper Preview.app'
+app = OUT / 'Disk Monitor Helper Preview 2.app'
 macos = app / 'Contents/MacOS'; macos.mkdir(parents=True, exist_ok=True)
 daemons = app / 'Contents/Library/LaunchDaemons'; daemons.mkdir(parents=True, exist_ok=True)
-app_id = 'local.darien.diskmonitor.spotlight-preview'
+app_id = 'local.darien.diskmonitor.spotlight-preview2'
 helper_id = app_id + '.scanner'
 with (app / 'Contents/Info.plist').open('wb') as f:
-    plistlib.dump({'CFBundleIdentifier': app_id, 'CFBundleName': 'Disk Monitor Helper Preview', 'CFBundleExecutable': 'Preview', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': BUILD_NUMBER, 'LSMinimumSystemVersion': '15.0'}, f)
+    plistlib.dump({'CFBundleIdentifier': app_id, 'CFBundleName': 'Disk Monitor Helper Preview 2', 'CFBundleExecutable': 'Preview', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': BUILD_NUMBER, 'LSMinimumSystemVersion': '15.0'}, f)
 with (daemons / (helper_id + '.plist')).open('wb') as f:
     plistlib.dump({'Label': helper_id, 'BundleProgram': 'Contents/MacOS/Scanner', 'MachServices': {helper_id: True}, 'ProcessType': 'Background', 'AssociatedBundleIdentifiers': [app_id]}, f)
 run([x for x in base if x != '-O'] + [str(SOURCE / 'Measurement.swift'), str(SOURCE / 'Tests.swift'), '-o', str(OUT / 'tests')])
