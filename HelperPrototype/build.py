@@ -56,7 +56,7 @@ legacy = Path('/Library/Developer/CommandLineTools/usr/include/swift/module.modu
 (OUT / 'empty.modulemap').write_text('// Local CLT overlay\n')
 roots = [{'type': 'file', 'name': str(legacy), 'external-contents': str(OUT / 'empty.modulemap')}] if legacy.exists() and legacy.with_name('bridging.modulemap').exists() else []
 (OUT / 'overlay.json').write_text(json.dumps({'version': 0, 'roots': roots}))
-base = ['xcrun', 'swiftc', '-swift-version', '5', '-target', os.uname().machine + '-apple-macos15.0', '-parse-as-library', '-O', '-vfsoverlay', str(OUT / 'overlay.json'), '-Xcc', '-ivfsoverlay', '-Xcc', str(OUT / 'overlay.json'), '-module-cache-path', str(OUT / 'modules'), str(SOURCE / 'Shared.swift'), str(SOURCE / 'RequestState.swift'), str(SOURCE / 'BundlePolicy.swift'), str(OUT / 'Identity.swift')]
+base = ['xcrun', 'swiftc', '-swift-version', '5', '-target', os.uname().machine + '-apple-macos15.0', '-parse-as-library', '-O', '-vfsoverlay', str(OUT / 'overlay.json'), '-Xcc', '-ivfsoverlay', '-Xcc', str(OUT / 'overlay.json'), '-module-cache-path', str(OUT / 'modules'), str(SOURCE / 'Shared.swift'), str(SOURCE / 'RequestState.swift'), str(SOURCE / 'RecoveryState.swift'), str(SOURCE / 'BundlePolicy.swift'), str(OUT / 'Identity.swift')]
 app = OUT / 'Disk Monitor Setup.app'
 macos = app / 'Contents/MacOS'; macos.mkdir(parents=True, exist_ok=True)
 daemons = app / 'Contents/Library/LaunchDaemons'; daemons.mkdir(parents=True, exist_ok=True)

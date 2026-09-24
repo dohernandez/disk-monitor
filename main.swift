@@ -502,6 +502,7 @@ final class Model: ObservableObject {
     }
     func scan(_ roots: [Root], manualSpotlight: Bool = false) {
         guard !scanning else { return }
+        guard !spotlightAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
         let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard !existing.isEmpty else { refreshMissingGrowthPaths(); status = "None of these folders exists"; return }
         let includesSpotlight = existing.contains { $0.path == SpotlightMeasurement.path }
@@ -1052,7 +1053,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var localEventMonitor: Any?
     let statusBadge = StatusBadgeView(frame: .zero)
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppUpdates.shared.start { [weak self] in self?.model.scanning == true }
+        AppUpdates.shared.start { [weak self] in self?.model.scanning == true || self?.model.spotlightAccess.uncertain == true }
         launchDiagnostic("didFinish")
         DispatchQueue.main.asyncAfter(deadline:.now()+2) { launchDiagnostic("status",self.item) }
         NSApp.setActivationPolicy(.accessory)
@@ -1136,7 +1137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { stopDismissMonitors() }
     func applicationDidResignActive(_ notification: Notification) { popover.performClose(nil) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        model.administratorMeasurement ? .terminateCancel : .terminateNow
+        model.administratorMeasurement && !model.spotlightAccess.uncertain ? .terminateCancel : .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) { stopDismissMonitors(); model.scanner.cancel() }
 }
@@ -1388,6 +1389,14 @@ if CommandLine.arguments.contains("--self-test") {
     invalidThresholds.timer?.invalidate(); invalidThresholds.folderTimer?.invalidate()
     configured.timer?.invalidate(); configured.folderTimer?.invalidate()
     restored.timer?.invalidate(); restored.folderTimer?.invalidate()
+    prefs.removePersistentDomain(forName: suite)
+    prefs.set(ScannerRecovery.bootSession() ?? "", forKey: "spotlightPendingScanBoot")
+    let interrupted = Model(home: portableHome.path, preferences: prefs, saveURL: root.appendingPathComponent("interrupted/readings.json"))
+    precondition(interrupted.spotlightAccess.uncertain)
+    interrupted.scan([Root(path: root.path, title: "Fixture")])
+    precondition(!interrupted.scanning && interrupted.status.contains("Restart your Mac"))
+    precondition(SpotlightAccess(preferences: prefs).uncertain, "Relaunch must not forget an unconfirmed scan")
+    interrupted.timer?.invalidate(); interrupted.folderTimer?.invalidate()
     prefs.removePersistentDomain(forName: suite)
     let spotlightFolder = root.appendingPathComponent("spotlight-fixture")
     try fm.createDirectory(at: spotlightFolder, withIntermediateDirectories: true)

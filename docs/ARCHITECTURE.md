@@ -260,10 +260,12 @@ retain their original date; they are not new measurements. A visible 60-second
 countdown explains the minimum interval. Administrator summaries do not generate
 cross-method growth deltas.
 
-Stop requests cancellation of the owned scan. A lost connection after measurement
-starts does not prove termination: scans, Quit and updater relaunch remain paused
-while completion is unknown. This fail-closed recovery limitation still needs live
-acceptance before release. App closure alone is not scanner unregistration.
+Stop requests cancellation of the owned scan. A lost connection does not prove
+termination. The app saves the boot identifier before requesting measurement and
+blocks new scans and updater relaunch until completion is confirmed or the Mac
+restarts. Reopening the app preserves that block. Setup explains recovery and offers
+Quit; quitting alone is not scanner unregistration or proof the scan stopped.
+Crash/reboot recovery still requires live acceptance before release.
 
 Release signing, installer compatibility, clean-Mac setup, cancellation and restart
 acceptance remain required. No release workflow activates this integration yet.

@@ -13,7 +13,7 @@ source = root / 'HelperPrototype'
 args = ['xcrun', 'swiftc', '-swift-version', '5', '-target', platform.machine() + '-apple-macos15.0', '-parse-as-library',
         '-vfsoverlay', str(build / 'toolchain-overlay.json'), '-Xcc', '-ivfsoverlay', '-Xcc', str(build / 'toolchain-overlay.json'),
         '-module-cache-path', str(build / 'scanner-fixture-modules')]
-args += [str(source / name) for name in ['Shared.swift', 'RequestState.swift', 'BundlePolicy.swift', 'Measurement.swift', 'Tests.swift']]
+args += [str(source / name) for name in ['Shared.swift', 'RequestState.swift', 'RecoveryState.swift', 'BundlePolicy.swift', 'Measurement.swift', 'Tests.swift']]
 args += [str(identity), '-o', str(build / 'scanner-fixtures')]
 subprocess.run(args, check=True)
 subprocess.run([str(build / 'scanner-fixtures')], check=True, timeout=60)

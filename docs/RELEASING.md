@@ -190,8 +190,8 @@ inside-out with hardened runtime and no library-validation exemption. The parent
 app keeps its existing signing policy and updater.
 
 Never place the scanner private key on runtime Macs, commit it or expose it to PR
-jobs. A dedicated stable release key and main-only import/cleanup workflow are still
-required before enabling this feature in releases. Prototype keys are temporary
+jobs. A dedicated stable release key must be provisioned before enabling this
+feature in releases. Prototype keys are temporary
 and retired; they are not release identities. The installer may re-sign only the
 outer ad-hoc app and must preserve and verify the nested scanner's signature.
 The legacy direct-in-main-app helper layout is rejected by packaging.
@@ -200,3 +200,14 @@ Run scripts/test_scanner_build.py and, for an isolated signed build,
 `DiskMonitor --scanner-package-self-test` before any installer acceptance. Neither
 command registers or measures. Live cancellation, guided setup, update/reapproval,
 restart and clean-Mac acceptance are separate from successful compilation.
+
+The release environment can enable scanner packaging with `SCANNER_RELEASE_ENABLED=true`,
+public variable `SCANNER_SIGNING_SHA1`, and secrets `SCANNER_P12_BASE64` and
+`SCANNER_P12_PASSWORD`. Leave the enable flag off until integrated acceptance passes.
+`scripts/build_signed_scanner.py` rejects PR and non-main execution, imports the
+dedicated certificate into a disposable CI keychain, verifies its public fingerprint,
+builds the same checked-out commit, and restores the keychain list and deletes its
+temporary keychain in a finally block. Credentials are removed from the build
+subprocess environment. The signed rebuild runs native, package and updater checks
+before packaging. A cancelled runner is disposable; it must never be a runtime Mac.
+Provisioning and secure backup of that stable identity are still outstanding.

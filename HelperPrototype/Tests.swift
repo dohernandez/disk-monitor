@@ -3,6 +3,11 @@ import Security
 
 @main enum Tests {
     static func main() throws {
+        precondition(!ScannerRecovery.needsRecovery(pendingBoot: nil, currentBoot: "boot-a"))
+        precondition(ScannerRecovery.needsRecovery(pendingBoot: "boot-a", currentBoot: "boot-a"))
+        precondition(!ScannerRecovery.needsRecovery(pendingBoot: "boot-a", currentBoot: "boot-b"))
+        precondition(ScannerRecovery.needsRecovery(pendingBoot: "boot-a", currentBoot: nil))
+        precondition(ScannerRecovery.needsRecovery(pendingBoot: "", currentBoot: "boot-b"))
         precondition(BundlePolicy.canRegister(status: 0, packageValid: true))
         precondition(BundlePolicy.canRegister(status: 3, packageValid: true))
         for state in [0, 1, 2, 3, 999] { precondition(!BundlePolicy.canRegister(status: state, packageValid: false)) }

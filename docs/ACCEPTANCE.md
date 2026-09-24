@@ -154,6 +154,9 @@ and Rename/Remove click behavior still require manual acceptance.
 - Verify no parallel ordinary/privileged scan; late/cancelled results cannot overwrite
   saved readings. Disconnect after measure must not pretend the scan has exited.
 - Repeat update repair, restart and disable on both architectures before release.
+- Kill only the deliberately tested client during an accepted scan: after relaunch,
+  new scans remain blocked with explicit Mac-restart guidance. After a Mac restart,
+  the previous boot marker clears. Never perform this against an unrelated process.
 
 September 24 preview evidence (build 7, arm64): the user observed a running scan
 followed by “Measurement cancelled”, then disabled the scanner. After disabling,

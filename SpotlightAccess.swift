@@ -17,6 +17,7 @@ final class SpotlightAccess: ObservableObject {
     @Published var automatic = false
     @Published var uncertain = false
     private let preferences: UserDefaults
+    private let pendingKey = "spotlightPendingScanBoot"
     private var window: NSWindow?
     private var timer: Timer?
     private var completion: ((Measurement) -> Void)?
@@ -36,6 +37,8 @@ final class SpotlightAccess: ObservableObject {
     init(preferences: UserDefaults) {
         self.preferences = preferences
         automatic = preferences.bool(forKey: "spotlightAutomaticMeasurement")
+        uncertain = ScannerRecovery.needsRecovery(pendingBoot: preferences.string(forKey: pendingKey), currentBoot: ScannerRecovery.bootSession())
+        if !uncertain { preferences.removeObject(forKey: pendingKey) }
         // No registration, IPC, keychain access or scan at construction.
     }
     func refreshAvailability() {
@@ -98,7 +101,10 @@ final class SpotlightAccess: ObservableObject {
         startTimer()
     }
     private func describeSetup() {
-        if !packageValid {
+        if uncertain {
+            title = "Restart your Mac before scanning again"
+            detail = "The previous scanner request has no confirmed completion. Saved measurements are kept and new scans are paused. Restart your Mac to ensure the old scan has stopped; reopening Disk Monitor alone does not clear this state."
+        } else if !packageValid {
             title = "Scanner unavailable in this build"
             detail = "This app does not contain a scanner signed with the expected release identity. Changing Full Disk Access will not repair this. Ordinary folder measurements remain available."
         } else if awaitingOff {
@@ -135,7 +141,7 @@ final class SpotlightAccess: ObservableObject {
         needsAccess = false; refreshAvailability(); describeSetup()
     }
     func register() {
-        guard packageValid, !busy, !changingRegistration else { return }
+        guard packageValid, !busy, !uncertain, !changingRegistration else { return }
         changingRegistration = true
         run("register") { reply in
             self.changingRegistration = false
@@ -150,7 +156,7 @@ final class SpotlightAccess: ObservableObject {
         }
     }
     func unregister(forRepair: Bool = false) {
-        guard !busy, !changingRegistration else { return }
+        guard !busy, !uncertain, !changingRegistration else { return }
         changingRegistration = true
         run("unregister") { reply in
             self.changingRegistration = false
@@ -168,10 +174,14 @@ final class SpotlightAccess: ObservableObject {
     }
     /// Caller owns the app's global scan slot. This never opens setup or requests approval.
     func measure(completion: @escaping (Measurement) -> Void) {
-        guard !busy, packageValid, registration == 1, !repair, !awaitingOff, !needsAccess else {
+        guard !busy, !uncertain, packageValid, registration == 1, !repair, !awaitingOff, !needsAccess else {
             completion(.failed("Scanner setup required")); return
         }
         if now < retryAt, let last { completion(last); return }
+        preferences.set(ScannerRecovery.bootSession() ?? "", forKey: pendingKey)
+        guard preferences.synchronize() else {
+            completion(.failed("Cannot save scanner recovery state; no measurement started")); return
+        }
         busy = true; cancelling = false; uncertain = false; measuring = false
         self.completion = completion; measurementID = UUID()
         let token = measurementID
@@ -192,10 +202,7 @@ final class SpotlightAccess: ObservableObject {
             case "packageFailed", "launchFailed":
                 self.repair = true; self.finish(.failed(reply.error ?? "Scanner launch failed"))
             case "uncertain", "bridgeExited":
-                if self.measuring {
-                    self.uncertain = true; self.title = "Scanner completion unconfirmed"
-                    self.detail = "New scans and updates are paused. " + (reply.error ?? "Waiting for the scanner")
-                } else { self.repair = true; self.finish(.failed(reply.error ?? "Scanner launch failed")) }
+                self.uncertain = true; self.describeSetup()
             default: break
             }
         }
@@ -209,6 +216,8 @@ final class SpotlightAccess: ObservableObject {
     private func finish(_ result: Measurement) {
         measurementID = UUID()
         busy = false; uncertain = false
+        preferences.removeObject(forKey: pendingKey)
+        preferences.synchronize()
         let callback = completion; completion = nil
         last = result
         retryAt = now + max(0, min(60, 60 - Date().timeIntervalSince(result.finishedAt)))
@@ -233,8 +242,7 @@ final class SpotlightAccess: ObservableObject {
         if busy {
             if !measuring && now - started >= 15 {
                 // Includes bridge startup; no claim that an unobserved request stopped.
-                uncertain = true; title = "Scanner startup is not responding"
-                detail = "Waiting for the signed client. New scans and updates are paused."
+                uncertain = true; describeSetup()
             } else if measuring && !cancelling && !uncertain {
                 let elapsed = Int(now - started)
                 detail = "\(elapsed / 60)m \(elapsed % 60)s elapsed. Scan budget: 15 minutes. No partial size is saved."
@@ -252,7 +260,10 @@ struct ProtectedFolderSetup: View {
         VStack(alignment: .leading, spacing: 18) {
             Text(access.title).font(.title2.bold())
             Text(access.detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if access.busy {
+            if access.uncertain {
+                Text("You can quit Disk Monitor, then restart your Mac from the Apple menu.")
+                Button("Quit Disk Monitor") { NSApp.terminate(nil) }
+            } else if access.busy {
                 ProgressView()
                 Button("Cancel measurement") { access.cancel() }
             } else if access.packageValid {
@@ -289,9 +300,10 @@ struct SpotlightStatus: View {
     let scanning: Bool
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            if access.busy { Text(access.title + " · " + access.detail).fixedSize(horizontal: false, vertical: true) }
+            if access.uncertain { Text("Scanner completion unconfirmed · restart your Mac").fixedSize(horizontal: false, vertical: true) }
+            else if access.busy { Text(access.title + " · " + access.detail).fixedSize(horizontal: false, vertical: true) }
             else if access.cooldown > 0 { Text("Recent measurement · next scan in \(access.cooldown)s").monospacedDigit() }
-            Button("Protected-folder setup…") { access.openSetup() }.disabled(scanning)
+            Button("Protected-folder setup…") { access.openSetup() }.disabled(scanning && !access.uncertain)
         }.buttonStyle(.borderless).font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

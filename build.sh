@@ -26,7 +26,7 @@ mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$build_dir/sparkle/LICENSE" "$app/Contents/Resources/SPARKLE-LICENSE"
 /usr/bin/ditto "$build_dir/sparkle/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 python3 scripts/scanner_identity.py "$build_dir"
-xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift Updates.swift SpotlightAccess.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Shared.swift HelperPrototype/RequestState.swift HelperPrototype/BundlePolicy.swift "$build_dir/ScannerIdentity.swift" -F "$build_dir/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
+xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift Updates.swift SpotlightAccess.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Shared.swift HelperPrototype/RequestState.swift HelperPrototype/RecoveryState.swift HelperPrototype/BundlePolicy.swift "$build_dir/ScannerIdentity.swift" -F "$build_dir/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
 
 if [ -n "${SCANNER_SIGNING_SHA1:-}" ]; then
     host="$app/Contents/Library/Scanner/Disk Monitor Scanner.app"

@@ -207,9 +207,13 @@ fixed read-only Spotlight operation or allow elevated writes. A hostile process
 already acting as the user can influence the unprivileged UI, but cannot sign a new
 bridge or helper without the isolated release key.
 
-The implementation deliberately blocks all scans and relaunch while a lost scan's
-completion is unknown. Recovering from a permanently lost connection without
-assuming the child exited remains a release gate.
+The implementation records the current boot identifier before requesting a scan.
+An unconfirmed request blocks new scans and updater relaunch even after the app
+restarts. A confirmed reply clears the marker; otherwise a different boot identifier
+is required. The UI permits quitting and explains that a Mac restart is needed.
+Failure to obtain a boot identifier stays blocked. This conservative recovery path
+does not claim that disconnection or unregister stopped the child. Live crash/reboot
+acceptance remains required.
 
 The user subsequently exercised build 7 cancellation: screenshots show measurement
 in progress followed by “Measurement cancelled”. Unregister then removed the service;
