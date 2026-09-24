@@ -233,13 +233,18 @@ The Nix store row remains informational: Separate accounting means the app does
 not measure it yet. APFS volume usage can be measured independently, but is not a
 Nix garbage-collection/reclaimable-space estimate.
 
-## Protected-folder scanner integration (not released)
+## Protected-folder scanner integration
 
-The working branch replaces the failed AppleScript authorization path with an
-optional, fixed-target scanner. Ordinary builds do not bundle or authorize this
-helper; setup explicitly reports when the signed package is unavailable.
+The fixed-target scanner replaces the failed AppleScript authorization path.
+Release packaging requires the signed scanner; missing credentials or a missing
+scanner fail the release instead of publishing an incomplete app. Local unsigned
+builds remain supported and explicitly report scanner unavailability.
 
-A scanner-enabled build offers **Protected-folder setup…** on the Spotlight row.
+Click the Spotlight row’s **Refresh** arrow to measure. It waits for a fresh scanner
+availability check and opens guided setup when approval or access is missing.
+A manual scan that finds missing access opens setup; scheduled scans never do.
+**Settings → Tracked folders → Spotlight scanner settings…** manages approval and
+scheduled measurement. The idle folder row has no separate setup link.
 Setup validates the nested scanner host/helper signatures before registration. The host uses only Apple frameworks and stays separate from Sparkle. Enable is an
 explicit user action; scheduled scans never register, authorize or open settings.
 After background approval and Full Disk Access as needed, use the row refresh to
@@ -267,8 +272,9 @@ restarts. Reopening the app preserves that block. Setup explains recovery and of
 Quit; quitting alone is not scanner unregistration or proof the scan stopped.
 Crash/reboot recovery still requires live acceptance before release.
 
-Release signing, installer compatibility, clean-Mac setup, cancellation and restart
-acceptance remain required. No release workflow activates this integration yet.
+Release checks require the signed scanner in both the staged app and mounted
+installer. Successful package checks do not establish live macOS approval or
+crash/reboot acceptance; record those separately in ACCEPTANCE.md.
 
 ## Deleted growth candidates
 

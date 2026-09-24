@@ -9,8 +9,10 @@ from pathlib import Path
 from bundle_info import APP_NAME, BINARY, IDENTIFIER
 
 
-def check(app):
+def check(app, require_scanner=False):
     app = Path(app).resolve()
+    if require_scanner and not (app / 'Contents/Library/Scanner/Disk Monitor Scanner.app').is_dir():
+        raise ValueError('Release requires the signed scanner; refusing a scanner-less app')
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     assert info['CFBundleIdentifier'] == IDENTIFIER
     assert info['LSMinimumSystemVersion'] == '15.0'
@@ -45,4 +47,4 @@ def check(app):
     print('PASS: ' + APP_NAME + ' ' + info['CFBundleShortVersionString'] + ' package')
 
 if __name__ == '__main__':
-    check(sys.argv[1])
+    check(sys.argv[1], require_scanner='--require-scanner' in sys.argv[2:])

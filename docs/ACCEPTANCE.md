@@ -142,11 +142,15 @@ and Rename/Remove click behavior still require manual acceptance.
 - Root-only access must stay protected/partial, never zero; do not grant privileges
   or rebuild the index as an acceptance shortcut.
 - Native toggle/click behavior and successful administrator-owned index measurement
-  remain manual checks; the app installs no persistent privileged helper.
+  remain manual checks; scanner registration requires explicit setup consent.
 
-## Integrated protected-folder scanner (pending release acceptance)
+## Integrated protected-folder scanner
 
-- Default builds must report unavailable and cannot register an unsigned/missing helper.
+- Unsigned source builds report unavailable and cannot register an unsigned/missing helper.
+- Release builds must include the signed scanner; missing credentials or helper fail packaging.
+- Refresh waits for current availability, opens setup when needed, and otherwise measures.
+- No permanent setup link appears under an idle Spotlight row. Settings retains scanner management.
+- A manual access failure opens guided setup; scheduled failures never request approval.
 - Signed app/helper mismatch, wrong peer, modified code and arbitrary paths fail closed.
 - Tests never register a daemon, request credentials or scan the real Spotlight index.
 - With accepted packaging, verify setup, explicit consent, scheduled opt-in, row refresh,

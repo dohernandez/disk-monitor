@@ -10,7 +10,7 @@ from bundle_info import APP_NAME, write_info
 from check_app import check
 
 
-def package(app, version, build, output):
+def package(app, version, build, output, require_scanner=False):
     app, output = Path(app).resolve(), Path(output).resolve()
     if (app / 'Contents/MacOS/Scanner').exists():
         raise ValueError('Scanner-enabled release packaging is not accepted yet; refusing to replace its pinned signature with ad-hoc signing')
@@ -30,7 +30,7 @@ def package(app, version, build, output):
         subprocess.run(['ditto', str(app), str(staged_app)], check=True)
         write_info(staged_app, version, build)
         subprocess.run(['codesign', '--force', '--sign', '-', str(staged_app)], check=True)
-        check(staged_app)
+        check(staged_app, require_scanner=require_scanner)
         (stage / 'Applications').symlink_to('/Applications', target_is_directory=True)
         (stage / 'Install.txt').write_text(
             APP_NAME + ' ' + version + '\n\n'
@@ -51,7 +51,7 @@ def package(app, version, build, output):
             attached = True
             assert (mount / 'Applications').is_symlink()
             assert (mount / 'Applications').readlink() == Path('/Applications')
-            check(mount / (APP_NAME + '.app'))
+            check(mount / (APP_NAME + '.app'), require_scanner=require_scanner)
         finally:
             if attached:
                 subprocess.run(['hdiutil', 'detach', str(mount)], check=True)
@@ -68,5 +68,6 @@ if __name__ == '__main__':
     parser.add_argument('--version', required=True)
     parser.add_argument('--build', default='1')
     parser.add_argument('--output', default='dist')
+    parser.add_argument('--require-scanner', action='store_true')
     args = parser.parse_args()
-    package(args.app, args.version, args.build, args.output)
+    package(args.app, args.version, args.build, args.output, require_scanner=args.require_scanner)

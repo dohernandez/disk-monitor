@@ -474,11 +474,16 @@ final class Model: ObservableObject {
     func refreshFolder(_ root: Root) {
         guard !scanning else { return }
         if root.path == SpotlightMeasurement.path {
-            spotlightAccess.refreshAvailability()
-            guard spotlightAccess.packageValid, spotlightAccess.registration == 1,
-                  !spotlightAccess.repair, !spotlightAccess.needsAccess else {
-                spotlightAccess.openSetup(); return
+            spotlightAccess.refreshAvailability { [weak self] in
+                guard let self, !self.scanning else { return }
+                guard self.spotlightAccess.packageValid, self.spotlightAccess.registration == 1,
+                      !self.spotlightAccess.repair, !self.spotlightAccess.needsAccess,
+                      !self.spotlightAccess.awaitingOff, !self.spotlightAccess.uncertain else {
+                    self.spotlightAccess.openSetup(); return
+                }
+                self.scan([root], manualSpotlight: true)
             }
+            return
         }
         scan([root], manualSpotlight: true)
     }
@@ -582,6 +587,10 @@ final class Model: ObservableObject {
             DispatchQueue.main.async {
                 self.scanning = false; self.activePath = nil; self.queuedPaths = []; self.refreshCapacity()
                 self.status = self.scanner.isCancelled ? "Scan stopped · previous readings kept" : helperFailure != nil ? "Spotlight needs attention · saved size kept" : "Scan finished · \(Date().formatted(date: .omitted, time: .shortened))"
+                if manualSpotlight && !self.scanner.isCancelled && helperFailure != nil &&
+                    (self.spotlightAccess.needsAccess || self.spotlightAccess.repair) {
+                    self.spotlightAccess.openSetup()
+                }
             }
         }
     }
@@ -709,7 +718,7 @@ struct FolderRow: View {
                 if model.trackedRoots.contains(where: { $0.path == root.path }) { Button("Stop tracking") { model.stopTracking(root.path) } }
             }
             if root.path == SpotlightMeasurement.path {
-                SpotlightStatus(access: model.spotlightAccess, scanning: model.scanning)
+                SpotlightStatus(access: model.spotlightAccess)
                     .padding(.horizontal, 12).padding(.bottom, 8)
             }
             if model.expanded.contains(root.path) {
@@ -828,7 +837,8 @@ struct FolderSettings: View {
             ForEach(model.customCaches) { root in
                 HStack { Text(root.title); Spacer(); Button("Remove") {model.stopTracking(root.path)} }.help(root.path)
             }
-            Text("Some folders remain protected even with Full Disk Access. Use Spotlight’s “Protected-folder setup…” to enable its optional scanner. Other folders do not receive administrator access. See Info for general access guidance.").font(.caption).foregroundStyle(Palette.secondary)
+            Button("Spotlight scanner settings…") { model.spotlightAccess.openSetup() }.disabled(model.scanning && !model.spotlightAccess.uncertain)
+            Text("Use the Spotlight row’s refresh arrow to measure or set up access. Some folders remain protected even with Full Disk Access. Other folders do not receive administrator access. See Info for general access guidance.").font(.caption).foregroundStyle(Palette.secondary)
             Button("Add cache folders…") {model.chooseRoots(asProject: false)}
         }.font(.system(size: 11))
     }
@@ -1359,6 +1369,23 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.scanState("/fixture/waiting") == .idle)
     let suite = "DiskMonitorTests." + UUID().uuidString
     let prefs = UserDefaults(suiteName: suite)!
+    var availabilityReply: ((BridgeMessage) -> Void)?
+    var availabilityRequests = 0
+    let accessFixture = SpotlightAccess(preferences: prefs) { operation, reply in
+        precondition(operation == "status", "Availability must never register or measure")
+        availabilityRequests += 1; availabilityReply = reply
+    }
+    var availabilityCompletions = 0
+    accessFixture.refreshAvailability { availabilityCompletions += 1 }
+    accessFixture.refreshAvailability { availabilityCompletions += 1 }
+    precondition(availabilityRequests == 1 && availabilityCompletions == 0)
+    availabilityReply?(BridgeMessage(event: "status", status: 1))
+    precondition(availabilityCompletions == 2 && accessFixture.registration == 1 && accessFixture.packageValid)
+    accessFixture.refreshAvailability { availabilityCompletions += 1 }
+    precondition(availabilityRequests == 2 && availabilityCompletions == 2)
+    availabilityReply?(BridgeMessage(event: "packageFailed"))
+    precondition(availabilityCompletions == 3 && accessFixture.registration == 0 && !accessFixture.packageValid,
+                 "A failed fresh check must clear previously approved availability")
     let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)
