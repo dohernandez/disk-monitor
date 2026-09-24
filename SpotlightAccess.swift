@@ -26,6 +26,8 @@ final class SpotlightAccess: ObservableObject {
     private var cancelling = false
     private var changingRegistration = false
     private var checkingStatus = false
+    private var availabilityCallbacks: [() -> Void] = []
+    private let operationOverride: ((String, @escaping (BridgeMessage) -> Void) -> Void)?
     private var measurementID = UUID()
     private var started: TimeInterval = 0
     private var measuring = false
@@ -34,25 +36,31 @@ final class SpotlightAccess: ObservableObject {
     var canAutomaticallyMeasure: Bool {
         automatic && packageValid && registration == 1 && !repair && !awaitingOff && !needsAccess && !uncertain
     }
-    init(preferences: UserDefaults) {
+    init(preferences: UserDefaults, operation: ((String, @escaping (BridgeMessage) -> Void) -> Void)? = nil) {
+        self.operationOverride = operation
         self.preferences = preferences
         automatic = preferences.bool(forKey: "spotlightAutomaticMeasurement")
         uncertain = ScannerRecovery.needsRecovery(pendingBoot: preferences.string(forKey: pendingKey), currentBoot: ScannerRecovery.bootSession())
         if !uncertain { preferences.removeObject(forKey: pendingKey) }
         // No registration, IPC, keychain access or scan at construction.
     }
-    func refreshAvailability() {
+    func refreshAvailability(completion: (() -> Void)? = nil) {
+        if let completion { availabilityCallbacks.append(completion) }
         guard !checkingStatus else { return }
         checkingStatus = true
         run("status") { reply in
             self.checkingStatus = false
             self.packageValid = reply.event != "packageFailed"
-            if let status = reply.status { self.registration = status }
+            self.registration = reply.status ?? 0
             if !self.busy && self.window != nil { self.describeSetup() }
+            let callbacks = self.availabilityCallbacks
+            self.availabilityCallbacks.removeAll()
+            callbacks.forEach { $0() }
         }
     }
     /// Launch only the signed fixed-operation bridge. Never run a shell or pass paths.
     private func run(_ operation: String, receive: @escaping (BridgeMessage) -> Void) {
+        if let operationOverride { operationOverride(operation, receive); return }
         let host = self.host
         DispatchQueue.global(qos: .utility).async {
             func deliver(_ message: BridgeMessage) { DispatchQueue.main.async { receive(message) } }
@@ -297,13 +305,11 @@ struct ProtectedFolderSetup: View {
 
 struct SpotlightStatus: View {
     @ObservedObject var access: SpotlightAccess
-    let scanning: Bool
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
             if access.uncertain { Text("Scanner completion unconfirmed · restart your Mac").fixedSize(horizontal: false, vertical: true) }
             else if access.busy { Text(access.title + " · " + access.detail).fixedSize(horizontal: false, vertical: true) }
             else if access.cooldown > 0 { Text("Recent measurement · next scan in \(access.cooldown)s").monospacedDigit() }
-            Button("Protected-folder setup…") { access.openSetup() }.disabled(scanning && !access.uncertain)
         }.buttonStyle(.borderless).font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

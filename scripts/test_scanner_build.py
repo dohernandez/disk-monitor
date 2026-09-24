@@ -10,10 +10,18 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from package import package
+from check_app import check
 import build_signed_scanner
 from build_signed_scanner import release_inputs
 
 class ScannerBuildTests(unittest.TestCase):
+    def test_release_rejects_missing_scanner_before_running_app(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch('check_app.subprocess.run') as execute:
+                with self.assertRaisesRegex(ValueError, 'Release requires the signed scanner'):
+                    check(Path(directory) / 'Disk Monitor.app', require_scanner=True)
+                execute.assert_not_called()
+
     def test_signing_cleanup_on_import_and_build_failure(self):
         for failure in ('import', 'build'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:

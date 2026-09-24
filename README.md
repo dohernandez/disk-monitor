@@ -179,4 +179,7 @@ and Rename/Remove click behavior still require manual acceptance.
 
 Spotlight index is a detected Shared caches & tools entry with a Settings toggle.
 Its root-owned directory may remain protected even with Full Disk Access; no
-persistent administrator helper or index cleanup is installed. The working branch contains an optional scanner integration that is not release-ready; ordinary builds cannot enable it. See [usage details](docs/USAGE.md#spotlight-index-tracking).
+index cleanup is performed. Refresh opens guided setup for the optional Spotlight
+scanner when needed; registration requires explicit consent. Other protected folders
+use the general Full Disk Access guidance in Info. Release packages include the signed
+scanner; local unsigned builds cannot enable it. See [usage details](docs/USAGE.md#spotlight-index-tracking).
