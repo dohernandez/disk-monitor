@@ -34,3 +34,9 @@ an approved helper's identity or lower its bundle version.
 No root scan or password prompt is part of automated tests. Live registration,
 Full Disk Access, upgrade and removal tests are explicitly separate and remain
 incomplete. See the exact acceptance results and blockers in SECURITY.md.
+
+Before any replacement, run `python3 HelperPrototype/verify_replacement.py
+PREVIOUS_APP REPLACEMENT_APP` (with both paths quoted). It verifies the original
+app and helper signing requirements plus an increasing build number. A new signing
+identity is not an update; do not install it over an approved helper. This preflight
+is necessary but does not establish macOS permission retention by itself.

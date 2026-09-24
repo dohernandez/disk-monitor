@@ -118,3 +118,16 @@ Do not merge this prototype as an implementation of automatic scanning. Stable
 same-identity upgrade acceptance, production signing custody, cancellation, clean-Mac
 setup and Intel testing must precede integration. Existing release scripts do not
 build or distribute this directory.
+
+## Replacement rejection isolated
+Earlier logs show an explicit code-signing launch-constraint violation before the
+subsequent generic program-not-found errors. The replacement does not satisfy the
+original app OR helper designated requirement; both comparisons were verified with
+codesign. It also downgraded the build number. This is not a scan/FDA timeout.
+A read-only replacement preflight now refuses both conditions. The two original
+pre-signed builds pass this preflight; the rotated replacement fails. Stable-identity
+live upgrades still need acceptance. No security policy was relaxed.
+
+Apple DTS recommends comparing old and new designated requirements when diagnosing
+this class of helper upgrade failure:
+https://developer.apple.com/forums/thread/795022

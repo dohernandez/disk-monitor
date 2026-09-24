@@ -5,6 +5,9 @@ Creates a self-signed test identity in its own private keychain, not the login k
 import hashlib, json, os, plistlib, secrets, shlex, subprocess, sys
 from pathlib import Path
 SOURCE = Path(__file__).resolve().parent
+BUILD_NUMBER = os.environ.get('PREVIEW_BUILD', '')
+if not BUILD_NUMBER.isdecimal() or int(BUILD_NUMBER) < 1:
+    raise SystemExit('Set PREVIEW_BUILD to an explicit positive, increasing build number.')
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else '/tmp/disk-helper-preview-build').absolute()
 OUT.mkdir(mode=0o700, parents=True, exist_ok=True)
 if OUT.is_symlink() or OUT.stat().st_uid != os.getuid() or OUT.stat().st_mode & 0o077:
@@ -60,7 +63,7 @@ daemons = app / 'Contents/Library/LaunchDaemons'; daemons.mkdir(parents=True, ex
 app_id = 'local.darien.diskmonitor.spotlight-preview'
 helper_id = app_id + '.scanner'
 with (app / 'Contents/Info.plist').open('wb') as f:
-    plistlib.dump({'CFBundleIdentifier': app_id, 'CFBundleName': 'Disk Monitor Helper Preview', 'CFBundleExecutable': 'Preview', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': os.environ.get('PREVIEW_BUILD', '1'), 'LSMinimumSystemVersion': '15.0'}, f)
+    plistlib.dump({'CFBundleIdentifier': app_id, 'CFBundleName': 'Disk Monitor Helper Preview', 'CFBundleExecutable': 'Preview', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': BUILD_NUMBER, 'LSMinimumSystemVersion': '15.0'}, f)
 with (daemons / (helper_id + '.plist')).open('wb') as f:
     plistlib.dump({'Label': helper_id, 'BundleProgram': 'Contents/MacOS/Scanner', 'MachServices': {helper_id: True}, 'ProcessType': 'Background', 'AssociatedBundleIdentifiers': [app_id]}, f)
 run([x for x in base if x != '-O'] + [str(SOURCE / 'Measurement.swift'), str(SOURCE / 'Tests.swift'), '-o', str(OUT / 'tests')])
