@@ -28,3 +28,5 @@ the built `sparkle` directory. Rendering never starts the updater; its manual ch
 button is disabled and its version label says Preview in documentation images.
 
 The Settings preview uses a taller canvas to show controls normally reached by scrolling.
+
+Render only the illustrative manual Spotlight action with `python3 docs/screenshots/render.py spotlight` (set `SPARKLE_TOOLS` for an isolated build). This never invokes the action or authorization.

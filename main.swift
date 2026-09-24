@@ -76,7 +76,7 @@ func intervalText(_ seconds: Int) -> String { seconds % 60 == 0 ? "\(seconds / 6
 func sizeText(_ bytes: Int64) -> String {
     let f = ByteCountFormatter(); f.countStyle = .binary; f.allowedUnits = [.useGB, .useMB, .useKB]; return f.string(fromByteCount: bytes)
 }
-struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil }
+struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil; var administratorMeasured: Bool? = nil }
 struct Root: Codable, Identifiable { var path: String; var title: String; var id: String { path } }
 struct Saved: Codable { var readings: [String: Reading]; var extras: [Root]; var projectPath: String? = nil; var excludedPaths: [String]? = nil; var projects: [Root]? = nil; var customCaches: [Root]? = nil; var largestCount: Int? = nil }
 struct DiskAlert: Identifiable {
@@ -144,7 +144,7 @@ func scopedScanResult(values:[String:Int64],root:String,detail:String)->ScanResu
 }
 func mergedReading(old:Reading?,bytes:Int64,error:String?,date:Date,protectedOnly:Bool = false)->Reading {
     if error != nil,let old=old,old.incomplete != true {return old}
-    return Reading(bytes:bytes,previous:error==nil && old?.incomplete != true ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error,protectedOnly:error != nil && protectedOnly)
+    return Reading(bytes:bytes,previous:error==nil && old?.incomplete != true && old?.administratorMeasured != true ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error,protectedOnly:error != nil && protectedOnly)
 }
 final class Scanner {
     private let lock = NSLock()
@@ -185,6 +185,51 @@ final class Scanner {
         return ScanResult(values: values, error: nil)
     }
 }
+// Deliberately not a general privileged command runner. No caller-supplied paths,
+// arguments, executable files or credentials cross this boundary.
+enum SpotlightMeasurement {
+    static let path = "/System/Volumes/Data/.Spotlight-V100"
+    enum Outcome: Equatable { case measured(Int64), cancelled, failed }
+    // System-owned ancestors only; refuse symlinks, ACLs and unexpected modes.
+    // du -P does not follow links, -x stays on this filesystem, -s emits only a total.
+    // CPU limit bounds work; it is not a wall-clock timeout or a cancellation promise.
+    static let command = #"for p in / /System /System/Volumes /System/Volumes/Data /System/Volumes/Data/.Spotlight-V100; do [ -d "$p" ] && [ ! -L "$p" ] || exit 1; case "$(/usr/bin/stat -f '%u:%Lp' "$p")" in 0:755|0:711|0:700|0:750|0:555|0:500) ;; *) exit 1 ;; esac; [ "$(/bin/ls -lde "$p" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ] || exit 1; done; ulimit -t 120 || exit 1; exec /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C /usr/bin/du -P -x -s -k /System/Volumes/Data/.Spotlight-V100 2>/dev/null"#
+    static var script: String {
+        let literal = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return """
+        try
+            return do shell script "\(literal)" with prompt "Disk Monitor wants to measure Spotlight’s index size. This only reads disk usage; it does not delete files or change permissions." with administrator privileges
+        on error number errorNumber
+            if errorNumber is -128 then return "CANCELLED"
+            return "FAILED"
+        end try
+        """
+    }
+    static func parse(_ output: String, exitStatus: Int32) -> Outcome {
+        guard exitStatus == 0, output.utf8.count < 256 else { return .failed }
+        let value = output.trimmingCharacters(in: .newlines)
+        if value == "CANCELLED" { return .cancelled }
+        let fields = value.split(separator: "\t", omittingEmptySubsequences: false)
+        guard fields.count == 2, fields[1] == path,
+              !fields[0].isEmpty, fields[0].utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+              let kib = Int64(fields[0]), kib <= Int64.max / 1024 else { return .failed }
+        return .measured(kib * 1024)
+    }
+    static func run() -> Outcome {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        process.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL": "C"]
+        process.currentDirectoryURL = URL(fileURLWithPath: "/")
+        process.standardInput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let output = Pipe(); process.standardOutput = output
+        do { try process.run() } catch { return .failed }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return parse(String(decoding: data, as: UTF8.self), exitStatus: process.terminationStatus)
+    }
+}
 final class Model: ObservableObject {
     @Published var readings: [String: Reading] = [:]
     @Published var extras: [Root] = []
@@ -197,6 +242,7 @@ final class Model: ObservableObject {
     @Published var free: Int64 = 0
     @Published var capacity: Int64 = 0
     @Published var scanning = false
+    @Published private(set) var administratorMeasurement = false
     @Published var status = "Preparing folder measurements…"
     @Published var activePath: String?
     @Published var queuedPaths: Set<String> = []
@@ -419,6 +465,34 @@ final class Model: ObservableObject {
             try PrivateReadings.write(JSONEncoder().encode(Saved(readings: readings, extras: extras, projectPath: projectPath, excludedPaths: Array(excludedPaths).sorted(), projects: projects, customCaches: customCaches, largestCount: largestCount)), to: saveURL)
         } catch { status = "Could not save private folder measurements" }
     }
+    func measureSpotlight() {
+        guard !scanning, spotlightPath == SpotlightMeasurement.path,
+              trackedRoots.contains(where: { $0.path == SpotlightMeasurement.path }) else { return }
+        scanning = true; administratorMeasurement = true
+        activePath = SpotlightMeasurement.path; queuedPaths = []
+        status = "Authorizing / measuring Spotlight…"
+        DispatchQueue.global(qos: .utility).async { [self] in
+            let result = SpotlightMeasurement.run()
+            DispatchQueue.main.async { self.finishSpotlight(result) }
+        }
+    }
+    func finishSpotlight(_ result: SpotlightMeasurement.Outcome) {
+        let path = SpotlightMeasurement.path
+        switch result {
+        case .measured(let bytes):
+            // Different traversal scope (-x, summary only): do not infer growth against
+            // an ordinary recursive scan. Only this fixed root is updated.
+            readings[path] = Reading(bytes: bytes, date: Date(), administratorMeasured: true)
+            errors.removeValue(forKey: path); protectedPaths.remove(path)
+            lastMeasuredAt = Date()
+            status = "Spotlight measured · administrator access"
+            save()
+        case .cancelled: status = "Authorization cancelled · saved size kept"
+        case .failed: status = "Spotlight measurement failed · saved size kept"
+        }
+        scanning = false; administratorMeasurement = false; activePath = nil; queuedPaths = []
+        refreshCapacity(); onStatus?()
+    }
     func scan(_ roots: [Root]) {
         guard !scanning else { return }
         let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -542,6 +616,7 @@ struct FolderRow: View {
     @ObservedObject var model: Model
     let root: Root
     var depth: Int = 0
+    @State private var confirmingMeasurement = false
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -559,6 +634,7 @@ struct FolderRow: View {
                         if model.scanState(root.path) != .idle {
                             Text(model.scanState(root.path) == .scanning ? "Scanning…" : "Queued…").font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.accent)
                         }
+                        if r.administratorMeasured == true { Text("Administrator · saved size").font(.system(size: 10)).foregroundStyle(Palette.secondary) }
                         if r.incomplete == true { Text(model.isProtected(root.path) ? "Partial · protected contents" : "Partial · scan error").font(.system(size: 10)).foregroundStyle(Palette.warning).help(r.scanError ?? model.errors[root.path] ?? "Older partial reading. Rescan this folder for the specific error.") }
                         if let old = r.previous {
                             let delta = r.bytes - old
@@ -582,6 +658,18 @@ struct FolderRow: View {
                 Button("Scan this folder") { model.scan([root]) }.disabled(model.scanning)
                 Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(root.path, forType: .string) }
                 if model.trackedRoots.contains(where: { $0.path == root.path }) { Button("Stop tracking") { model.stopTracking(root.path) } }
+            }
+            if root.path == SpotlightMeasurement.path {
+                Button("Measure with administrator access…") { confirmingMeasurement = true }
+                    .buttonStyle(.borderless).font(.system(size: 11))
+                    .disabled(model.scanning)
+                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 12).padding(.bottom, 8)
+                    .alert("Measure Spotlight’s index?", isPresented: $confirmingMeasurement) {
+                        Button("Cancel", role: .cancel) { }
+                        Button("Continue") { model.measureSpotlight() }
+                    } message: {
+                        Text("macOS will authorize one read-only size check of the Spotlight index. No files are deleted and no permissions are changed. This can take several minutes. You can cancel authorization; once scanning starts, wait for it to finish before quitting.")
+                    }
             }
             if model.expanded.contains(root.path) {
                 let children = model.children(root.path)
@@ -699,7 +787,7 @@ struct FolderSettings: View {
             ForEach(model.customCaches) { root in
                 HStack { Text(root.title); Spacer(); Button("Remove") {model.stopTracking(root.path)} }.help(root.path)
             }
-            Text("Spotlight’s index may require administrator access; Full Disk Access alone does not override its root ownership. Protected readings are not zero.").font(.caption).foregroundStyle(Palette.secondary)
+            Text("Spotlight’s index may require administrator access; Full Disk Access alone does not override its root ownership. Use its “Measure with administrator access…” button for a manual size check. Protected readings are not zero.").font(.caption).foregroundStyle(Palette.secondary)
             Button("Add cache folders…") {model.chooseRoots(asProject: false)}
         }.font(.system(size: 11))
     }
@@ -889,10 +977,10 @@ struct Dashboard: View {
                 Button { model.choose() } label: { Image(systemName: "folder.badge.plus").frame(width: 22, height: 28) }.help("Add folder").accessibilityLabel("Add folder")
                 Button { if model.scanning { model.scanner.cancel() } else { model.scanAllFolders() } } label: {
                     Image(systemName: model.scanning ? "stop.circle" : "arrow.clockwise").frame(width: 22, height: 28)
-                }.help(model.scanning ? "Stop scan" : "Scan now").accessibilityLabel(model.scanning ? "Stop scan" : "Scan now")
+                }.disabled(model.administratorMeasurement).help(model.administratorMeasurement ? "Wait for the administrator measurement to finish" : model.scanning ? "Stop scan" : "Scan now").accessibilityLabel(model.scanning ? "Stop scan" : "Scan now")
                 Button { showingSettings = false; showingInformation.toggle() } label: { Image(systemName: "info.circle").frame(width: 22, height: 28) }.help("About measurements").accessibilityLabel("About measurements")
                 Button { showingInformation = false; showingSettings.toggle() } label: { Image(systemName: "gearshape").frame(width: 22, height: 28) }.help("Settings").accessibilityLabel("Settings")
-                Button { model.scanner.cancel(); NSApp.terminate(nil) } label: { Image(systemName: "power").frame(width: 22, height: 28) }.help("Quit Disk Monitor").accessibilityLabel("Quit Disk Monitor")
+                Button { model.scanner.cancel(); NSApp.terminate(nil) } label: { Image(systemName: "power").frame(width: 22, height: 28) }.disabled(model.administratorMeasurement).help("Quit Disk Monitor").accessibilityLabel("Quit Disk Monitor")
             }.buttonStyle(.plain).foregroundStyle(Palette.primary).padding(14)
         }.frame(width: 440, height: 690)
             .foregroundStyle(Palette.primary)
@@ -1001,6 +1089,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
     func popoverDidClose(_ notification: Notification) { stopDismissMonitors() }
     func applicationDidResignActive(_ notification: Notification) { popover.performClose(nil) }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        model.administratorMeasurement ? .terminateCancel : .terminateNow
+    }
     func applicationWillTerminate(_ notification: Notification) { stopDismissMonitors(); model.scanner.cancel() }
 }
 if CommandLine.arguments.contains("--updater-self-test") {
@@ -1022,9 +1113,44 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(diskBadgeLevel([scanWarning,growthWarning])==2)
     precondition(diskBadgeLevel([spaceWarning,scanWarning,criticalWarning])==3)
     precondition(diskBadgeLevel([diskSpaceAlert(free:0,capacity:0)!])==1)
+    // Compile only: never invoke authorization or read the live index in tests.
+    var scriptError: NSDictionary?
+    precondition(NSAppleScript(source: SpotlightMeasurement.script)?.compileAndReturnError(&scriptError) == true, "Invalid authorization script: \(String(describing: scriptError))")
+    let shellCheck = Process()
+    shellCheck.executableURL = URL(fileURLWithPath: "/bin/sh")
+    shellCheck.arguments = ["-n", "-c", SpotlightMeasurement.command]
+    try shellCheck.run(); shellCheck.waitUntilExit()
+    precondition(shellCheck.terminationStatus == 0)
+    let indexPath = SpotlightMeasurement.path
+    precondition(SpotlightMeasurement.parse("123\t" + indexPath + "\n", exitStatus: 0) == .measured(125952))
+    precondition(SpotlightMeasurement.parse("0\t" + indexPath, exitStatus: 0) == .measured(0))
+    precondition(SpotlightMeasurement.parse("CANCELLED\n", exitStatus: 0) == .cancelled)
+    for output in ["FAILED", "", "123\t/tmp/other", "-1\t" + indexPath, "+1\t" + indexPath,
+                   "9223372036854775807\t" + indexPath, "1\t" + indexPath + "\n2\t" + indexPath,
+                   "1\t" + indexPath + "/child", "NaN\t" + indexPath, String(repeating: "1", count: 300)] {
+        precondition(SpotlightMeasurement.parse(output, exitStatus: 0) == .failed)
+    }
+    precondition(SpotlightMeasurement.parse("123\t" + indexPath, exitStatus: 1) == .failed)
     let fm = FileManager.default, root = fm.temporaryDirectory.appendingPathComponent("DiskMonitor-test-" + UUID().uuidString)
     try fm.createDirectory(at: root.appendingPathComponent("folder with spaces"), withIntermediateDirectories: true)
     try Data(repeating: 42, count: 1024 * 1024).write(to: root.appendingPathComponent("folder with spaces/sample"))
+    // Exercise the same root-path checks without elevation or directory scanning.
+    let guardBody = SpotlightMeasurement.command.components(separatedBy: "; do ")[1].components(separatedBy: "; done; ulimit")[0]
+    func acceptsAdministratorRoot(_ path: String) throws -> Bool {
+        let check = Process()
+        check.executableURL = URL(fileURLWithPath: "/bin/sh")
+        check.arguments = ["-c", "for p in \"$@\"; do " + guardBody + "; done", "guard-test", path]
+        check.environment = ["PATH": "/usr/bin:/bin", "LC_ALL": "C"]
+        check.standardOutput = FileHandle.nullDevice; check.standardError = FileHandle.nullDevice
+        try check.run(); check.waitUntilExit()
+        return check.terminationStatus == 0
+    }
+    precondition(try! acceptsAdministratorRoot("/System"))
+    precondition(try! !acceptsAdministratorRoot(root.path))
+    let systemLink = root.appendingPathComponent("system-link")
+    try fm.createSymbolicLink(atPath: systemLink.path, withDestinationPath: "/System")
+    precondition(try! !acceptsAdministratorRoot(systemLink.path))
+    precondition(try! !acceptsAdministratorRoot(root.appendingPathComponent("missing").path))
     let privateURL = root.appendingPathComponent("private/readings.json")
     try PrivateReadings.write(Data("keep".utf8), to: privateURL)
     try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: privateURL.deletingLastPathComponent().path)
@@ -1225,6 +1351,28 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(spotlightReloaded.defaultCacheOptions.contains { $0.path == spotlightFolder.path })
     precondition(!spotlightReloaded.caches.contains { $0.path == spotlightFolder.path })
     precondition(spotlightReloaded.readings[spotlightFolder.path]?.bytes == 48*gib)
+    // Fixture path injection must never turn this into arbitrary privileged scanning.
+    spotlightModel.measureSpotlight()
+    precondition(!spotlightModel.scanning)
+    let prior = Reading(bytes: 12345, date: Date(timeIntervalSince1970: 100))
+    spotlightModel.readings[indexPath] = prior
+    spotlightModel.errors[indexPath] = "old protected result"
+    spotlightModel.protectedPaths.insert(indexPath)
+    for outcome in [SpotlightMeasurement.Outcome.cancelled, .failed] {
+        spotlightModel.finishSpotlight(outcome)
+        precondition(spotlightModel.readings[indexPath]?.bytes == prior.bytes)
+        precondition(spotlightModel.readings[indexPath]?.date == prior.date)
+        precondition(spotlightModel.errors[indexPath] == "old protected result")
+        precondition(spotlightModel.protectedPaths.contains(indexPath))
+        precondition(!spotlightModel.scanning && !spotlightModel.administratorMeasurement)
+    }
+    spotlightModel.finishSpotlight(.measured(98765))
+    let authorized = spotlightModel.readings[indexPath]!
+    precondition(authorized.bytes == 98765 && authorized.administratorMeasured == true && authorized.previous == nil)
+    precondition(spotlightModel.errors[indexPath] == nil && !spotlightModel.protectedPaths.contains(indexPath))
+    precondition(try! JSONDecoder().decode(Reading.self, from: JSONEncoder().encode(authorized)).administratorMeasured == true)
+    precondition(mergedReading(old: authorized, bytes: 111, error: "denied", date: Date()).bytes == 98765)
+    precondition(mergedReading(old: authorized, bytes: 99999, error: nil, date: Date()).previous == nil)
     spotlightModel.timer?.invalidate(); spotlightModel.folderTimer?.invalidate()
     spotlightReloaded.timer?.invalidate(); spotlightReloaded.folderTimer?.invalidate()
     try fm.removeItem(at: root)

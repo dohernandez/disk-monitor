@@ -2,6 +2,7 @@
 """Render current SwiftUI views with example data; no live app or screen capture."""
 import json
 import os
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -45,6 +46,8 @@ with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
         "-Xcc", "-ivfsoverlay", "-Xcc", str(overlay), "-module-cache-path", str(temporary / "modules"),
         str(temporary / "main.swift"), str(ROOT / "Updates.swift"), "-F", str(sparkle), "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", str(sparkle), "-o", str(binary), "-framework", "Cocoa", "-framework", "SwiftUI"], check=True)
     pages = ["dashboard", "settings"] if APP == "disk-monitor" else ["usage", "subscriptions"]
+    pages = sys.argv[1:] or pages
+    assert all(page in ["dashboard", "settings", "spotlight", "usage", "subscriptions"] for page in pages)
     for page in pages:
         output = ROOT / "docs/screenshots" / (page + ".png")
         subprocess.run([str(binary), page, str(output)], check=True, timeout=30)
