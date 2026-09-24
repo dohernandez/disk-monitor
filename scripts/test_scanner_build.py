@@ -15,6 +15,16 @@ import build_signed_scanner
 from build_signed_scanner import release_inputs
 
 class ScannerBuildTests(unittest.TestCase):
+    def test_internal_client_has_identity_distinct_from_retired_app(self):
+        root = Path(__file__).resolve().parents[1]
+        shared = (root / 'HelperPrototype/Shared.swift').read_text()
+        build = (root / 'build.sh').read_text()
+        self.assertIn('static let appID = "local.darien.diskmonitor.scanner.client"', shared)
+        self.assertIn('--identifier local.darien.diskmonitor.scanner.client ', build)
+        self.assertNotIn('SpotlightAccess.swift', build)
+        self.assertFalse((root / 'SpotlightAccess.swift').exists())
+        self.assertNotIn('NSWindow', (root / 'PrivilegedFolderReader.swift').read_text())
+
     def test_release_rejects_missing_scanner_before_running_app(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch('check_app.subprocess.run') as execute:

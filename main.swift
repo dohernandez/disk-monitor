@@ -195,11 +195,8 @@ final class Scanner {
         return ScanResult(values: values, error: nil)
     }
 }
-// Deliberately not a general privileged command runner. No caller-supplied paths,
-// arguments, executable files or credentials cross this boundary.
-enum SpotlightMeasurement {
-    static let path = "/System/Volumes/Data/.Spotlight-V100"
-    enum Outcome: Equatable { case measured(Int64), cancelled, failed }
+enum DefaultFolders {
+    static let spotlightIndex = "/System/Volumes/Data/.Spotlight-V100"
 
 }
 final class Model: ObservableObject {
@@ -214,7 +211,6 @@ final class Model: ObservableObject {
     @Published var free: Int64 = 0
     @Published var capacity: Int64 = 0
     @Published var scanning = false
-    @Published private(set) var administratorMeasurement = false
     @Published var status = "Preparing folder measurements…"
     @Published var activePath: String?
     @Published var queuedPaths: Set<String> = []
@@ -222,9 +218,9 @@ final class Model: ObservableObject {
     @Published var lastMeasuredAt: Date?
     let scanner = Scanner()
     private var pendingAccessScans: [String: Root] = [:]
-    lazy var spotlightAccess = SpotlightAccess(preferences: preferences)
     lazy var folderAccess: FolderAccess = {
-        let access = FolderAccess(spotlight: spotlightAccess)
+        let access = FolderAccess(preferences: preferences)
+        access.onChange = { [weak self] in self?.objectWillChange.send(); self?.onStatus?() }
         access.onGranted = { [weak self] roots in
             guard let self else { return }
             for root in roots { self.pendingAccessScans[root.path] = root }
@@ -323,9 +319,7 @@ final class Model: ObservableObject {
     }
     var spotlightEnabled: Bool { trackedRoots.contains { $0.path == spotlightPath } }
     func startFolderMonitoring() {
-        guard spotlightPath == SpotlightMeasurement.path else { scanMissingRoots(); return }
-        _ = folderAccess
-        spotlightAccess.setEnabled(spotlightEnabled) { [weak self] in self?.scanMissingRoots() }
+        folderAccess.synchronize(trackedRoots, checkingAccess: true) { [weak self] in self?.scanMissingRoots() }
     }
     func setCacheEnabled(_ root: Root, _ enabled: Bool) {
         if !enabled { stopTracking(root.path); return }
@@ -496,35 +490,13 @@ final class Model: ObservableObject {
             try PrivateReadings.write(JSONEncoder().encode(Saved(readings: readings, extras: extras, projectPath: projectPath, excludedPaths: Array(excludedPaths).sorted(), projects: projects, customCaches: customCaches, largestCount: largestCount)), to: saveURL)
         } catch { status = "Could not save private folder measurements" }
     }
-    func measureSpotlight() {
-        guard spotlightPath == SpotlightMeasurement.path,
-              trackedRoots.contains(where: { $0.path == SpotlightMeasurement.path }) else { return }
-        refreshFolder(Root(path: SpotlightMeasurement.path, title: "Spotlight index"))
-    }
     func refreshFolder(_ root: Root) {
         scan([root], requestAccess: true)
     }
-    func stopScan() { folderAccess.cancelPending(); pendingAccessScans.removeAll(); scanner.cancel(); if administratorMeasurement { spotlightAccess.cancel() } }
-    func finishSpotlight(_ result: SpotlightMeasurement.Outcome) {
-        let path = SpotlightMeasurement.path
-        switch result {
-        case .measured(let bytes):
-            // Different traversal scope (-x, summary only): do not infer growth against
-            // an ordinary recursive scan. Only this fixed root is updated.
-            readings[path] = Reading(bytes: bytes, date: Date(), administratorMeasured: true)
-            errors.removeValue(forKey: path); protectedPaths.remove(path)
-            lastMeasuredAt = Date()
-            status = "Spotlight measured · administrator access"
-            save()
-        case .cancelled: status = "Measurement cancelled · saved size kept"
-        case .failed: status = "Spotlight measurement failed · saved size kept"
-        }
-        scanning = false; administratorMeasurement = false; activePath = nil; queuedPaths = []
-        refreshCapacity(); onStatus?()
-    }
+    func stopScan() { folderAccess.cancelPending(); pendingAccessScans.removeAll(); scanner.cancel(); folderAccess.cancelMeasurement() }
     func scan(_ roots: [Root], requestAccess: Bool = false) {
         guard !scanning else { return }
-        guard !spotlightAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
+        guard !folderAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
         scanning = true; scanner.reset(); status = "Checking folder access…"
         folderAccess.prepare(roots, requestIfNeeded: requestAccess) { [weak self] allowed in
             guard let self else { return }
@@ -532,65 +504,33 @@ final class Model: ObservableObject {
             guard !self.scanner.isCancelled else { self.folderAccess.cancelPending(); self.status = "Scan stopped"; return }
             guard !allowed.isEmpty else { self.status = "Folder unavailable or access required · saved sizes kept"; return }
             for root in allowed { self.pendingAccessScans.removeValue(forKey: root.path) }
-            self.performScan(allowed, requestAccess: requestAccess)
+            self.performScan(allowed)
         }
     }
-    private func performScan(_ roots: [Root], requestAccess: Bool) {
+    private func performScan(_ roots: [Root]) {
         guard !scanning else { return }
-        guard !spotlightAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
+        guard !folderAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
         let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard !existing.isEmpty else { refreshMissingGrowthPaths(); status = "None of these folders exists"; return }
-        let includesSpotlight = existing.contains { $0.path == SpotlightMeasurement.path }
-        let useHelper = includesSpotlight && spotlightAccess.enabled && spotlightAccess.ready && spotlightAccess.packageValid && spotlightAccess.registration == 1
-            && spotlightAccess.failure == nil && !spotlightAccess.needsAccess
-            && (requestAccess || spotlightAccess.canAutomaticallyMeasure)
         scanning = true; scanner.reset(); queuedPaths = Set(existing.map(\.path)); status = "Preparing scan…"
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
-            var helperFailure: String?
             for (i, root) in existing.enumerated() {
                 if self.scanner.isCancelled { break }
                 DispatchQueue.main.async { self.activePath = root.path; self.queuedPaths.remove(root.path); self.status = "Scanning \(root.title) · \(i + 1)/\(existing.count)" }
-                if root.path == SpotlightMeasurement.path {
-                    guard useHelper else {
-                        // Disabled/unconfigured is not evidence of a permission denial.
-                        // Leave prior readings and error classification untouched.
-                        helperFailure = "Spotlight access is required"
-                        continue
-                    }
-                    let done = DispatchSemaphore(value: 0)
-                    var measured: Measurement?
-                    DispatchQueue.main.async {
-                        guard !self.scanner.isCancelled else { done.signal(); return }
-                        self.administratorMeasurement = true
-                        self.spotlightAccess.measure { value in measured = value; done.signal() }
-                    }
-                    done.wait() // Only this worker waits; UI/XPC/cancellation stay on the main thread.
-                    DispatchQueue.main.sync {
-                        self.administratorMeasurement = false
-                        guard !self.scanner.isCancelled, let result = measured else { return }
-                        if result.error == "Measurement cancelled" { self.scanner.cancel(); return }
-                        if let bytes = result.bytes {
-                            // Reused cooldown results retain their real measurement date.
-                            self.readings[root.path] = Reading(bytes: bytes, date: result.finishedAt, administratorMeasured: true)
-                            self.errors.removeValue(forKey: root.path); self.protectedPaths.remove(root.path)
-                            self.lastMeasuredAt = max(self.lastMeasuredAt ?? result.finishedAt, result.finishedAt)
-                            self.save()
-                        } else {
-                            helperFailure = result.error ?? "Spotlight measurement failed"
-                            self.errors[root.path] = helperFailure
-                            if self.spotlightAccess.needsAccess { self.protectedPaths.insert(root.path) }
-                            else { self.protectedPaths.remove(root.path) }
-                        }
-                        self.onStatus?()
-                    }
-                    continue
+                let done = DispatchSemaphore(value: 0)
+                var measurement: FolderAccess.Result?
+                DispatchQueue.main.async {
+                    guard !self.scanner.isCancelled else { done.signal(); return }
+                    self.folderAccess.measure(root, scanner: self.scanner) { result in measurement = result; done.signal() }
                 }
-                let result = self.scanner.scan(root.path)
+                done.wait() // The shared worker waits; permission replies and UI remain responsive.
+                guard let measurement else { continue }
+                let result = measurement.scan
                 DispatchQueue.main.sync {
-                    if result.error == "Cancelled" { return }
+                    if result.error == "Cancelled" || self.scanner.isCancelled { return }
                     if result.protectedOnly(for: root.path) {
-                        self.folderAccess.reportDenied(root, paths: Array(result.failures.keys), requestIfNeeded: requestAccess)
+                        self.folderAccess.reportDenied(root)
                     }
                     let affectedPaths = Set(result.values.keys).union(result.failures.keys).union([root.path])
                     self.protectedPaths = self.protectedPaths.filter { $0 != root.path && !$0.hasPrefix(root.path + "/") }
@@ -604,9 +544,13 @@ final class Model: ObservableObject {
                     for (path, bytes) in result.values {
                         let pathError=result.error(for:path)
                         if let pathError=pathError {self.errors[path]=pathError} else {self.errors.removeValue(forKey:path)}
-                        self.readings[path]=mergedReading(old:self.readings[path],bytes:bytes,error:pathError,date:Date(),protectedOnly:result.protectedOnly(for:path))
+                        if measurement.elevated && pathError == nil {
+                            self.readings[path] = Reading(bytes: bytes, date: measurement.date, administratorMeasured: true)
+                        } else {
+                            self.readings[path]=mergedReading(old:self.readings[path],bytes:bytes,error:pathError,date:measurement.date,protectedOnly:result.protectedOnly(for:path))
+                        }
                     }
-                    if !result.values.isEmpty { self.lastMeasuredAt = Date() }
+                    if !result.values.isEmpty { self.lastMeasuredAt = max(self.lastMeasuredAt ?? measurement.date, measurement.date) }
                     let cachedPaths = self.childCache.keys.filter { $0 == root.path || $0.hasPrefix(root.path + "/") }
                     for path in cachedPaths {
                         self.childCache.removeValue(forKey: path)
@@ -618,13 +562,10 @@ final class Model: ObservableObject {
             }
             DispatchQueue.main.async {
                 self.scanning = false; self.activePath = nil; self.queuedPaths = []; self.refreshCapacity()
-                self.status = self.scanner.isCancelled ? "Scan stopped · previous readings kept" : helperFailure != nil ? "Spotlight needs attention · saved size kept" : "Scan finished · \(Date().formatted(date: .omitted, time: .shortened))"
+                self.status = self.scanner.isCancelled ? "Scan stopped · previous readings kept" : "Scan finished · \(Date().formatted(date: .omitted, time: .shortened))"
                 if self.scanner.isCancelled { self.folderAccess.cancelPending(); self.pendingAccessScans.removeAll() }
                 else { self.resumeAccessScans() }
-                if requestAccess && !self.scanner.isCancelled && helperFailure != nil &&
-                    (self.spotlightAccess.needsAccess || self.spotlightAccess.failure != nil) {
-                    self.spotlightAccess.openSetup()
-                }
+
             }
         }
     }
@@ -636,7 +577,7 @@ final class Model: ObservableObject {
         if project.path == path { projectPath = nil }
         save(); onStatus?()
         folderAccess.cancel(path); pendingAccessScans.removeValue(forKey: path)
-        if path == SpotlightMeasurement.path { spotlightAccess.setEnabled(false) }
+        folderAccess.synchronize(trackedRoots)
     }
     func setProjects(_ path: String) {
         if project.path != path { excludedPaths.insert(project.path) }
@@ -652,7 +593,7 @@ final class Model: ObservableObject {
         largestCount = count; save()
     }
     func addRoot(_ url: URL, asProject: Bool) {
-        if url.path == SpotlightMeasurement.path { setCacheEnabled(Root(path: url.path, title: "Spotlight index"), true); return }
+        if url.path == DefaultFolders.spotlightIndex { setCacheEnabled(Root(path: url.path, title: "Spotlight index"), true); return }
         let current = projectRoots
         let root = Root(path: url.path, title: url.lastPathComponent)
         projects = current.filter { $0.path != url.path }
@@ -679,7 +620,7 @@ final class Model: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url { setProjects(url.path) }
     }
     func addFolder(_ url: URL) {
-        if url.path == SpotlightMeasurement.path { setCacheEnabled(Root(path: url.path, title: "Spotlight index"), true); return }
+        if url.path == DefaultFolders.spotlightIndex { setCacheEnabled(Root(path: url.path, title: "Spotlight index"), true); return }
         excludedPaths.remove(url.path)
         if !trackedRoots.contains(where: { $0.path == url.path }) { extras.append(Root(path: url.path, title: url.lastPathComponent)) }
         save(); onStatus?()
@@ -712,7 +653,6 @@ struct FolderRow: View {
     @ObservedObject var model: Model
     let root: Root
     var depth: Int = 0
-    @State private var confirmingMeasurement = false
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -755,9 +695,21 @@ struct FolderRow: View {
                 Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(root.path, forType: .string) }
                 if model.trackedRoots.contains(where: { $0.path == root.path }) { Button("Stop tracking") { model.stopTracking(root.path) } }
             }
-            if root.path == SpotlightMeasurement.path {
-                SpotlightStatus(access: model.spotlightAccess)
-                    .padding(.horizontal, 12).padding(.bottom, 8)
+            if let activity = model.folderAccess.activity(for: root) {
+                Text(activity).font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
+            }
+            if let requirement = model.folderAccess.requirements[root.path] {
+                HStack {
+                    switch requirement {
+                    case .fileAccess:
+                        Text("Protected by macOS").help("Access was denied. This alone does not mean Full Disk Access is missing.")
+                        Button("Privacy settings…") { model.folderAccess.openSettings(for: root) }
+                    case .backgroundApproval:
+                        Text("Waiting for macOS approval")
+                        Button("Open System Settings…") { model.folderAccess.openSettings(for: root) }
+                    case .failed(let reason): Text("Cannot scan folder").help(reason)
+                    }
+                }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
             }
             if model.expanded.contains(root.path) {
                 let children = model.children(root.path)
@@ -874,7 +826,7 @@ struct FolderSettings: View {
             ForEach(model.customCaches) { root in
                 HStack { Text(root.title); Spacer(); Button("Remove") {model.stopTracking(root.path)} }.help(root.path)
             }
-            Text("Enabling Spotlight requests any missing macOS permissions. Disk Monitor checks again at startup. See Info for protected-folder access.").font(.caption).foregroundStyle(Palette.secondary)
+            Text("Every folder uses the same access and scan flow. macOS asks for any supported permissions when needed. See Info for protected-folder access.").font(.caption).foregroundStyle(Palette.secondary)
             Button("Add cache folders…") {model.chooseRoots(asProject: false)}
         }.font(.system(size: 11))
     }
@@ -1021,7 +973,7 @@ struct Dashboard: View {
                         Text("Folders protected by macOS").font(.headline).foregroundStyle(Palette.primary)
                         Text("Protected by macOS means a permission restriction prevented a complete measurement; it does not mean the folder is empty. Partial · protected contents shows only the readable portion. Earlier complete sizes keep their original measurement date.")
                         Text("For any affected folder, check System Settings → Privacy & Security → Full Disk Access for Disk Monitor. After allowing access, return to Disk Monitor to continue the requested scan. Full Disk Access grants broad access and may not unlock every system-owned folder.")
-                        Text("When Spotlight is enabled, Disk Monitor checks its scanner approval and access at app startup and when you turn its toggle on. Updates restart the app and use that same check. Missing permissions open setup guidance. Turning Spotlight off also unregisters its scanner. Every folder passes through the same access check before scanning; missing access opens the relevant permission steps.")
+                        Text("All folders use the same access and scan flow. macOS shows its native permission prompts where supported. Protected data that requires administrator access is read internally after macOS approval. If access is denied, the folder shows its status and keeps saved measurements. Full Disk Access is managed in System Settings and does not override every system restriction. No separate scanner setup window is required.")
                         Text("Adding a folder never grants administrator access. Some system folders need a separately supported measurement method and may remain protected. Disk Monitor never changes folder permissions or deletes monitored files.")
                     }.font(.system(size: 12)).foregroundStyle(Palette.secondary).padding(20)
                 }
@@ -1073,7 +1025,7 @@ struct Dashboard: View {
                 }.help(model.scanning ? "Stop scan" : "Scan now").accessibilityLabel(model.scanning ? "Stop scan" : "Scan now")
                 Button { showingSettings = false; showingInformation.toggle() } label: { Image(systemName: "info.circle").frame(width: 22, height: 28) }.help("About measurements").accessibilityLabel("About measurements")
                 Button { showingInformation = false; showingSettings.toggle() } label: { Image(systemName: "gearshape").frame(width: 22, height: 28) }.help("Settings").accessibilityLabel("Settings")
-                Button { model.scanner.cancel(); NSApp.terminate(nil) } label: { Image(systemName: "power").frame(width: 22, height: 28) }.disabled(model.administratorMeasurement).help("Quit Disk Monitor").accessibilityLabel("Quit Disk Monitor")
+                Button { model.scanner.cancel(); NSApp.terminate(nil) } label: { Image(systemName: "power").frame(width: 22, height: 28) }.disabled(model.folderAccess.busy).help("Quit Disk Monitor").accessibilityLabel("Quit Disk Monitor")
             }.buttonStyle(.plain).foregroundStyle(Palette.primary).padding(14)
         }.frame(width: 440, height: 690)
             .foregroundStyle(Palette.primary)
@@ -1099,7 +1051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var localEventMonitor: Any?
     let statusBadge = StatusBadgeView(frame: .zero)
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppUpdates.shared.start { [weak self] in self?.model.scanning == true || self?.model.spotlightAccess.uncertain == true }
+        AppUpdates.shared.start { [weak self] in self?.model.scanning == true || self?.model.folderAccess.uncertain == true }
         launchDiagnostic("didFinish")
         DispatchQueue.main.asyncAfter(deadline:.now()+2) { launchDiagnostic("status",self.item) }
         NSApp.setActivationPolicy(.accessory)
@@ -1183,7 +1135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { stopDismissMonitors() }
     func applicationDidResignActive(_ notification: Notification) { popover.performClose(nil) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        model.administratorMeasurement && !model.spotlightAccess.uncertain ? .terminateCancel : .terminateNow
+        model.folderAccess.busy && !model.folderAccess.uncertain ? .terminateCancel : .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) { stopDismissMonitors(); model.scanner.cancel() }
 }
@@ -1212,7 +1164,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(diskBadgeLevel([scanWarning,growthWarning])==2)
     precondition(diskBadgeLevel([spaceWarning,scanWarning,criticalWarning])==3)
     precondition(diskBadgeLevel([diskSpaceAlert(free:0,capacity:0)!])==1)
-    let indexPath = SpotlightMeasurement.path
+    let indexPath = DefaultFolders.spotlightIndex
     let fm = FileManager.default, root = fm.temporaryDirectory.appendingPathComponent("DiskMonitor-test-" + UUID().uuidString)
     try fm.createDirectory(at: root.appendingPathComponent("folder with spaces"), withIntermediateDirectories: true)
     try Data(repeating: 42, count: 1024 * 1024).write(to: root.appendingPathComponent("folder with spaces/sample"))
@@ -1405,167 +1357,87 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.scanState("/fixture/waiting") == .idle)
     let suite = "DiskMonitorTests." + UUID().uuidString
     let prefs = UserDefaults(suiteName: suite)!
-    var availabilityReply: ((BridgeMessage) -> Void)?
-    var availabilityRequests = 0
-    let accessFixture = SpotlightAccess(preferences: prefs) { operation, reply in
-        precondition(operation == "status", "Availability must never register or measure")
-        availabilityRequests += 1; availabilityReply = reply
-    }
-    var availabilityCompletions = 0
-    accessFixture.refreshAvailability { availabilityCompletions += 1 }
-    accessFixture.refreshAvailability { availabilityCompletions += 1 }
-    precondition(availabilityRequests == 1 && availabilityCompletions == 0)
-    availabilityReply?(BridgeMessage(event: "status", status: 1))
-    precondition(availabilityCompletions == 2 && accessFixture.registration == 1 && accessFixture.packageValid)
-    accessFixture.refreshAvailability { availabilityCompletions += 1 }
-    precondition(availabilityRequests == 2 && availabilityCompletions == 2)
-    availabilityReply?(BridgeMessage(event: "packageFailed"))
-    precondition(availabilityCompletions == 3 && accessFixture.registration == 0 && !accessFixture.packageValid,
-                 "A failed fresh check must clear previously approved availability")
-    var lifecycleOperations: [String] = []
-    var lifecycleReplies: [(BridgeMessage) -> Void] = []
-    var setupPresentations = 0
-    let lifecycle = SpotlightAccess(preferences: prefs, operation: { operation, reply in
-        lifecycleOperations.append(operation); lifecycleReplies.append(reply)
-    }, presentSetup: { setupPresentations += 1 })
-    func answerLifecycle(_ event: String, _ status: Int) {
-        lifecycleReplies.removeFirst()(BridgeMessage(event: event, status: status))
-    }
-    prefs.set(true, forKey: "scannerRegisteredInMainBundle")
-    // One toggle registers and asks only for the macOS approval that is missing.
-    lifecycle.setEnabled(true)
-    answerLifecycle("status", 3); answerLifecycle("status", 2)
-    precondition(lifecycleOperations == ["status", "register"] && setupPresentations == 1)
-    precondition(lifecycle.enabled && !lifecycle.ready)
-    // Startup/return from approval checks actual access, not just registration.
-    lifecycle.setEnabled(true)
-    answerLifecycle("status", 1); answerLifecycle("access", 1)
-    precondition(lifecycle.needsAccess && !lifecycle.ready && setupPresentations == 2)
-    lifecycle.setEnabled(true)
-    answerLifecycle("status", 1); answerLifecycle("access", 0)
-    precondition(lifecycle.ready && lifecycle.canAutomaticallyMeasure && !lifecycle.needsAccess)
-    precondition(setupPresentations == 2, "Already-granted access must not prompt again")
-    // Disabling the same toggle unregisters; startup with it off never registers.
-    lifecycle.setEnabled(false)
-    answerLifecycle("status", 1); answerLifecycle("status", 3)
-    precondition(lifecycleOperations.last == "unregister" && !lifecycle.enabled && !lifecycle.ready)
-    lifecycle.setEnabled(false); answerLifecycle("status", 3)
-    precondition(lifecycleOperations.last == "status" && lifecycleReplies.isEmpty)
-    // Off while registration is in flight must win over a late successful register.
-    lifecycle.setEnabled(true); answerLifecycle("status", 3)
-    lifecycle.setEnabled(false); answerLifecycle("status", 1)
-    answerLifecycle("status", 1); answerLifecycle("status", 3)
-    precondition(!lifecycle.enabled && !lifecycle.ready && lifecycleOperations.last == "unregister")
-    precondition(!lifecycleOperations.contains("measure"), "Startup checks never run a size scan")
-    // Off during a measurement waits for owned cancellation before unregistering.
-    lifecycle.setEnabled(true); answerLifecycle("status", 1); answerLifecycle("access", 0)
-    var cancelledResult: Measurement?
-    lifecycle.measure { cancelledResult = $0 }
-    let measurementReply = lifecycleReplies.removeFirst()
-    lifecycle.setEnabled(false)
-    precondition(lifecycleOperations.last == "cancel")
-    answerLifecycle("cancelRequested", 1)
-    measurementReply(BridgeMessage(event: "result", measurement: Measurement(bytes: 100, finishedAt: Date(), error: nil)))
-    precondition(cancelledResult?.bytes == nil && cancelledResult?.error == "Measurement cancelled")
-    answerLifecycle("status", 1); answerLifecycle("status", 3)
-    precondition(lifecycleOperations.last == "unregister" && !lifecycle.busy && !lifecycle.enabled)
-    // A stale or disconnected helper is replaced internally, once per user intent.
-    var recoveryOps: [String] = []
-    var recoveryReplies: [(BridgeMessage) -> Void] = []
-    var recoveryPrompts = 0, resumed = 0
-    let recovery = SpotlightAccess(preferences: prefs, operation: { op, reply in
-        recoveryOps.append(op); recoveryReplies.append(reply)
-    }, presentSetup: { recoveryPrompts += 1 })
-    recovery.onReady = { resumed += 1 }
-    func answerRecovery(_ event: String, _ status: Int? = nil, _ error: String? = nil) {
-        recoveryReplies.removeFirst()(BridgeMessage(event: event, status: status, error: error))
-    }
-    recovery.setEnabled(true)
-    answerRecovery("status", 1); answerRecovery("launchFailed", nil, "Incompatible scanner")
-    precondition(recoveryOps == ["status", "check", "unregister"] && recoveryPrompts == 0)
-    answerRecovery("status", 3); answerRecovery("status", 1); answerRecovery("access", 0)
-    precondition(recovery.ready && resumed == 1 && recoveryPrompts == 0)
-    // Persistent failure stops after one replacement, preserving its actual error.
-    recovery.setEnabled(true)
-    answerRecovery("status", 1); answerRecovery("launchFailed", nil, "Connection failed")
-    answerRecovery("status", 3); answerRecovery("status", 1)
-    answerRecovery("launchFailed", nil, "Connection failed")
-    precondition(recoveryReplies.isEmpty && recovery.failure == "Connection failed" && !recovery.ready)
-    precondition(recoveryPrompts == 1 && resumed == 1)
-    // Permission denial never triggers the launch-failure replacement loop.
-    let beforeDenial = recoveryOps.count
-    recovery.setEnabled(true); answerRecovery("status", 1); answerRecovery("access", 1)
-    precondition(Array(recoveryOps.dropFirst(beforeDenial)) == ["status", "check"])
-    let beforeActivation = recoveryOps.count
-    recovery.returnedToApp()
-    precondition(recoveryOps.count == beforeActivation, "Showing an access window must not cause an activation loop")
-    // Returning from Full Disk Access refreshes the helper and continues automatically.
-    recovery.willOpenPermissionSettings(fullDiskAccess: true)
-    recovery.returnedToApp(); answerRecovery("status", 1)
-    precondition(recoveryOps.last == "unregister")
-    answerRecovery("status", 3); answerRecovery("status", 1); answerRecovery("access", 0)
-    precondition(recovery.ready && resumed == 2)
-    recovery.returnedToApp()
-    precondition(recoveryReplies.isEmpty)
-    // If replacement needs OS approval, only that approval is shown.
-    recovery.setEnabled(true); answerRecovery("status", 1); answerRecovery("launchFailed")
-    answerRecovery("status", 3); answerRecovery("status", 2)
-    precondition(!recovery.ready && recovery.registration == 2 && recovery.failure == nil)
-    recovery.willOpenPermissionSettings(); recovery.returnedToApp()
-    answerRecovery("status", 1); answerRecovery("access", 0)
-    precondition(recovery.ready && resumed == 3)
-    // Off during replacement must not re-register from the stale on request.
-    recovery.setEnabled(true); answerRecovery("status", 1); answerRecovery("launchFailed")
-    recovery.setEnabled(false); answerRecovery("status", 3); answerRecovery("status", 3)
-    precondition(!recovery.enabled && recoveryOps.last == "status" && recoveryReplies.isEmpty)
-    precondition(!recoveryOps.contains("measure"), "Permission/recovery fixtures never request a real scan")
-    // Upgrading the old nested registration refreshes ownership once, inside the access module.
-    prefs.removeObject(forKey: "scannerRegisteredInMainBundle")
-    recovery.setEnabled(true); answerRecovery("status", 1)
-    precondition(recoveryOps.last == "unregister")
-    answerRecovery("status", 3); answerRecovery("status", 1); answerRecovery("access", 0)
-    precondition(prefs.bool(forKey: "scannerRegisteredInMainBundle") && recovery.ready)
-    // A permission failure during a size request cannot immediately retry itself.
-    recovery.setEnabled(true); answerRecovery("status", 1); answerRecovery("access", 0)
-    recovery.measure { _ in }
-    recoveryReplies.removeFirst()(BridgeMessage(event: "result", measurement: .failed("Full Disk Access required")))
-    precondition(recovery.needsAccess && !recovery.ready && !recovery.canAutomaticallyMeasure)
-    recovery.setEnabled(false); answerRecovery("status", 1); answerRecovery("status", 3)
-    // Every ordinary folder uses the same gate; no privileged operation is requested.
-    var ordinaryPrompts = 0
-    let ordinaryPresenter = SpotlightAccess(preferences: prefs, operation: { _, _ in
-        preconditionFailure("Ordinary folders must never use privileged IPC")
-    }, presentSetup: { ordinaryPrompts += 1 })
-    var permissionState: FolderAccess.Check = .available
-    let gate = FolderAccess(spotlight: ordinaryPresenter, probe: { _ in permissionState })
-    let ordinaryRoot = Root(path: root.appendingPathComponent("ordinary").path, title: "Ordinary fixture")
-    func prepareOrdinary(_ interactive: Bool) -> [Root] {
-        var result: [Root]?
-        gate.prepare([ordinaryRoot], requestIfNeeded: interactive) { result = $0 }
+    var ops: [String] = []
+    var replies: [(BridgeMessage) -> Void] = []
+    let reader = PrivilegedFolderReader(preferences: prefs, operation: { op, reply in ops.append(op); replies.append(reply) })
+    prefs.set(true, forKey: "scannerClientIdentityV2")
+    var check: FolderAccess.Check = .available
+    let gate = FolderAccess(preferences: prefs, reader: reader, probe: { _ in check })
+    let ordinary = Root(path: root.appendingPathComponent("ordinary").path, title: "Ordinary")
+    let protectedRoot = Root(path: indexPath, title: "Protected fixture")
+    func drainUntil(_ complete: () -> Bool) {
         let deadline = Date().addingTimeInterval(5)
-        while result == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
-        precondition(result != nil); return result!
+        while !complete() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        precondition(complete())
     }
-    precondition(prepareOrdinary(true).count == 1 && ordinaryPrompts == 0)
-    permissionState = .permissionRequired
-    precondition(prepareOrdinary(false).isEmpty && ordinaryPrompts == 0)
-    precondition(prepareOrdinary(true).isEmpty && ordinaryPrompts == 1)
-    var resumedOrdinary: [Root] = []
-    gate.onGranted = { resumedOrdinary = $0 }
-    permissionState = .available
-    ordinaryPresenter.willOpenPermissionSettings(fullDiskAccess: true); ordinaryPresenter.returnedToApp()
-    let accessDeadline = Date().addingTimeInterval(5)
-    while resumedOrdinary.isEmpty && Date() < accessDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
-    precondition(resumedOrdinary.map(\.path) == [ordinaryRoot.path])
-    permissionState = .failed("I/O error")
-    precondition(prepareOrdinary(true).isEmpty && ordinaryPrompts == 1, "I/O errors are not permission requests")
-    permissionState = .permissionRequired
-    var cancelledPreparation: [Root]?
-    gate.prepare([ordinaryRoot], requestIfNeeded: true) { cancelledPreparation = $0 }
-    gate.cancel(ordinaryRoot.path)
-    let cancelDeadline = Date().addingTimeInterval(5)
-    while cancelledPreparation == nil && Date() < cancelDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
-    precondition(cancelledPreparation?.isEmpty == true && ordinaryPrompts == 1)
+    var allowed: [Root]?
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    precondition(allowed?.count == 1 && ops.isEmpty, "Readable folders never need elevated I/O")
+    check = .permissionRequired; allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    precondition(allowed!.isEmpty && gate.requirements[ordinary.path] == .fileAccess && ops.isEmpty)
+    check = .available; allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    precondition(allowed!.count == 1 && gate.requirements[ordinary.path] == nil)
+    allowed = nil
+    gate.prepare([protectedRoot], requestIfNeeded: true) { allowed = $0 }
+    replies.removeFirst()(BridgeMessage(event: "status", status: 3))
+    replies.removeFirst()(BridgeMessage(event: "status", status: 2, error: "Operation not permitted"))
+    precondition(allowed!.isEmpty && gate.requirements[indexPath] == .backgroundApproval)
+    precondition(ops == ["status", "register"], "Native approval must never trigger an unregister/repair loop")
+    allowed = nil
+    gate.prepare([protectedRoot], requestIfNeeded: true) { allowed = $0 }
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    replies.removeFirst()(BridgeMessage(event: "access", status: 0))
+    precondition(allowed?.map(\.path) == [indexPath] && gate.requirements[indexPath] == nil)
+    var elevated: FolderAccess.Result?
+    gate.measure(protectedRoot, scanner: Scanner()) { elevated = $0 }
+    let stamp = Date(timeIntervalSinceNow: -5)
+    replies.removeFirst()(BridgeMessage(event: "result", measurement: Measurement(bytes: 1234, finishedAt: stamp)))
+    precondition(elevated?.scan.values[indexPath] == 1234 && elevated?.date == stamp && elevated?.elevated == true)
+    // One return from native approval resumes exactly one pending folder.
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 2))
+    allowed = nil
+    gate.prepare([protectedRoot], requestIfNeeded: false) { allowed = $0 }
+    var resumedRoots: [Root] = []
+    gate.onGranted = { resumedRoots += $0 }
+    gate.willOpenSettings(); gate.returnedFromSettings()
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    replies.removeFirst()(BridgeMessage(event: "access", status: 0))
+    precondition(resumedRoots.map(\.path) == [indexPath], "Permission return must resume once")
+    gate.returnedFromSettings()
+    precondition(resumedRoots.count == 1 && replies.isEmpty)
+    // A new uncached measurement is cancelled through the same folder owner.
+    reader.setEnabled(false)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    replies.removeFirst()(BridgeMessage(event: "status", status: 3))
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    replies.removeFirst()(BridgeMessage(event: "access", status: 0))
+    elevated = nil
+    gate.measure(protectedRoot, scanner: Scanner()) { elevated = $0 }
+    let scanReply = replies.removeFirst()
+    gate.cancelMeasurement()
+    precondition(ops.last == "cancel" && elevated == nil)
+    replies.removeFirst()(BridgeMessage(event: "cancelRequested"))
+    scanReply(BridgeMessage(event: "result", measurement: Measurement(bytes: 9999, finishedAt: Date())))
+    precondition(elevated?.scan.error == "Cancelled" && elevated?.scan.values.isEmpty == true)
+    check = .permissionRequired; allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }; gate.cancel(ordinary.path)
+    drainUntil { allowed != nil }
+    precondition(allowed!.isEmpty && gate.requirements[ordinary.path] == nil, "Stopping tracking wins over a late access check")
+    // Startup checks ordinary roots too, independent of saved measurement age.
+    var startupChecked = false
+    gate.synchronize([ordinary], checkingAccess: true) { startupChecked = true }
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    replies.removeFirst()(BridgeMessage(event: "status", status: 3))
+    drainUntil { startupChecked }
+    precondition(gate.requirements[ordinary.path] == .fileAccess)
+    gate.cancelPending()
     let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)
@@ -1599,17 +1471,17 @@ if CommandLine.arguments.contains("--self-test") {
     prefs.removePersistentDomain(forName: suite)
     prefs.set(ScannerRecovery.bootSession() ?? "", forKey: "spotlightPendingScanBoot")
     let interrupted = Model(home: portableHome.path, preferences: prefs, saveURL: root.appendingPathComponent("interrupted/readings.json"))
-    precondition(interrupted.spotlightAccess.uncertain)
+    precondition(interrupted.folderAccess.uncertain)
     interrupted.scan([Root(path: root.path, title: "Fixture")])
     precondition(!interrupted.scanning && interrupted.status.contains("Restart your Mac"))
-    precondition(SpotlightAccess(preferences: prefs).uncertain, "Relaunch must not forget an unconfirmed scan")
+    precondition(PrivilegedFolderReader(preferences: prefs).uncertain, "Relaunch must not forget an unconfirmed scan")
     interrupted.timer?.invalidate(); interrupted.folderTimer?.invalidate()
     prefs.removePersistentDomain(forName: suite)
     let spotlightFolder = root.appendingPathComponent("spotlight-fixture")
     try fm.createDirectory(at: spotlightFolder, withIntermediateDirectories: true)
     let spotlightState = root.appendingPathComponent("spotlight-state/readings.json")
     let spotlightModel = Model(home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
-    precondition(!spotlightModel.spotlightEnabled, "New installations require the Spotlight toggle before registration")
+    precondition(!spotlightModel.spotlightEnabled, "New installations require the folder toggle before tracking")
     spotlightModel.setCacheEnabled(Root(path: spotlightFolder.path, title: "Spotlight index"), true)
     precondition(spotlightModel.caches.contains { $0.path == spotlightFolder.path && $0.title == "Spotlight index" })
     spotlightModel.readings[spotlightFolder.path] = Reading(bytes: 48*gib, date: Date())
@@ -1623,25 +1495,8 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(spotlightReloaded.defaultCacheOptions.contains { $0.path == spotlightFolder.path })
     precondition(!spotlightReloaded.caches.contains { $0.path == spotlightFolder.path })
     precondition(spotlightReloaded.readings[spotlightFolder.path]?.bytes == 48*gib)
-    // Fixture path injection must never turn this into arbitrary privileged scanning.
-    spotlightModel.measureSpotlight()
-    precondition(!spotlightModel.scanning)
-    let prior = Reading(bytes: 12345, date: Date(timeIntervalSince1970: 100))
-    spotlightModel.readings[indexPath] = prior
-    spotlightModel.errors[indexPath] = "old protected result"
-    spotlightModel.protectedPaths.insert(indexPath)
-    for outcome in [SpotlightMeasurement.Outcome.cancelled, .failed] {
-        spotlightModel.finishSpotlight(outcome)
-        precondition(spotlightModel.readings[indexPath]?.bytes == prior.bytes)
-        precondition(spotlightModel.readings[indexPath]?.date == prior.date)
-        precondition(spotlightModel.errors[indexPath] == "old protected result")
-        precondition(spotlightModel.protectedPaths.contains(indexPath))
-        precondition(!spotlightModel.scanning && !spotlightModel.administratorMeasurement)
-    }
-    spotlightModel.finishSpotlight(.measured(98765))
-    let authorized = spotlightModel.readings[indexPath]!
-    precondition(authorized.bytes == 98765 && authorized.administratorMeasured == true && authorized.previous == nil)
-    precondition(spotlightModel.errors[indexPath] == nil && !spotlightModel.protectedPaths.contains(indexPath))
+    // Historical elevated readings remain compatible and never create cross-method growth.
+    let authorized = Reading(bytes: 98765, date: Date(), administratorMeasured: true)
     precondition(try! JSONDecoder().decode(Reading.self, from: JSONEncoder().encode(authorized)).administratorMeasured == true)
     precondition(mergedReading(old: authorized, bytes: 111, error: "denied", date: Date()).bytes == 98765)
     precondition(mergedReading(old: authorized, bytes: 99999, error: nil, date: Date()).previous == nil)

@@ -5,7 +5,7 @@ enum HelperIdentity {
     #if DISK_MONITOR
     static let containerID = "local.darien.diskmonitor"
     static let clientName = "ScannerBridge"
-    static let appID = "local.darien.diskmonitor.scanner"
+    static let appID = "local.darien.diskmonitor.scanner.client"
     static let serviceID = "local.darien.diskmonitor.scanner.service"
     #else
     static let containerID = "local.darien.diskmonitor.spotlight-setup"
