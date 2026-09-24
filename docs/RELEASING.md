@@ -179,3 +179,46 @@ before claiming end-to-end installation acceptance. An older signed feed can be
 replayed to delay update discovery; installed build comparison prevents it being
 used to offer an older build as a newer one. Protect GitHub access and the signing
 key independently.
+
+## Experimental scanner packaging
+
+`SCANNER_SIGNING_SHA1` is an optional public certificate fingerprint for isolated
+build validation, not a credential. When absent, the build contains no privileged
+scanner and cannot register one. When present, the signer must already be available
+in the build keychain. The nested Disk Monitor Scanner.app and its helper are signed
+inside-out with hardened runtime and no library-validation exemption. The parent
+app keeps its existing signing policy and updater.
+
+Never place the scanner private key on runtime Macs, commit it or expose it to PR
+jobs. A dedicated stable release key must be provisioned before enabling this
+feature in releases. Prototype keys are temporary
+and retired; they are not release identities. The installer may re-sign only the
+outer ad-hoc app and must preserve and verify the nested scanner's signature.
+The legacy direct-in-main-app helper layout is rejected by packaging.
+
+Run scripts/test_scanner_build.py and, for an isolated signed build,
+`DiskMonitor --scanner-package-self-test` before any installer acceptance. Neither
+command registers or measures. Live cancellation, guided setup, update/reapproval,
+restart and clean-Mac acceptance are separate from successful compilation.
+
+The release environment can enable scanner packaging with `SCANNER_RELEASE_ENABLED=true`,
+public variable `SCANNER_SIGNING_SHA1`, and secrets `SCANNER_P12_BASE64` and
+`SCANNER_P12_PASSWORD`. Leave the enable flag off until integrated acceptance passes.
+`scripts/build_signed_scanner.py` rejects PR and non-main execution, imports the
+dedicated certificate into a disposable CI keychain, verifies its public fingerprint,
+builds the same checked-out commit, and restores the keychain list and deletes its
+temporary keychain in a finally block. Credentials are removed from the build
+subprocess environment. The signed rebuild runs native, package and updater checks
+before packaging. A cancelled runner is disposable; it must never be a runtime Mac.
+The dedicated identity was provisioned on September 24; the release flag remains off.
+Only the encrypted PKCS12 backup and public certificate remain locally; the password
+is stored in the release environment. GitHub secrets cannot be read back through
+the API; backup recovery requires a separately reviewed trusted workflow.
+
+After merging this disabled implementation, dispatch **Signed scanner validation**
+from `main`. It builds two candidates with the same identity on both architectures,
+checks signatures, fixtures, updater startup and increasing helper build numbers,
+and uploads test artifacts. It creates no release or tag and registers no scanner.
+The candidate builds are explicitly for supervised testing, not distribution.
+Do not install them over a used app without preserving the previous app and checking
+their metadata. Live integrated acceptance must pass before enabling releases.

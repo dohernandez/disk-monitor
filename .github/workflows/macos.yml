@@ -66,6 +66,8 @@ jobs:
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
           sh build.sh
+      - name: Check unprivileged scanner fixtures
+        run: python3 scripts/check_helper_fixtures.py "$RUNNER_TEMP/build"
       - name: Verify update signatures and tamper rejection
         env:
           SPARKLE_TOOLS: ${{ runner.temp }}/build/sparkle
@@ -145,6 +147,21 @@ jobs:
           path: ${{ runner.temp }}/download
       - name: Unpack tested app
         run: ditto -x -k "$RUNNER_TEMP/download/app.zip" "$RUNNER_TEMP/unpacked"
+      - name: Build scanner-enabled release with isolated signing key
+        if: vars.SCANNER_RELEASE_ENABLED == 'true'
+        env:
+          SCANNER_SIGNING_SHA1: ${{ vars.SCANNER_SIGNING_SHA1 }}
+          SCANNER_P12_BASE64: ${{ secrets.SCANNER_P12_BASE64 }}
+          SCANNER_P12_PASSWORD: ${{ secrets.SCANNER_P12_PASSWORD }}
+          BUILD_DIR: ${{ runner.temp }}/scanner-release
+          APP_BUILD: ${{ github.run_number }}
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          python3 scripts/build_signed_scanner.py
+          python3 scripts/check_app.py "$BUILD_DIR/Disk Monitor.app"
+          python3 scripts/check_helper_fixtures.py "$BUILD_DIR"
+          python3 scripts/check_updater.py "$BUILD_DIR/Disk Monitor.app"
+          ditto "$BUILD_DIR/Disk Monitor.app" "$RUNNER_TEMP/unpacked/Disk Monitor.app"
       - name: Create and verify installer
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}

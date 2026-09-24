@@ -20,6 +20,14 @@ def check(app):
     assert (app/'Contents/Resources/SPARKLE-LICENSE').is_file()
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--self-test'], check=True, timeout=120)
+    scanner_host = app / 'Contents/Library/Scanner/Disk Monitor Scanner.app'
+    if scanner_host.exists():
+        subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--scanner-package-self-test'], check=True, timeout=30)
+        for signed in [scanner_host, scanner_host / 'Contents/MacOS/Scanner']:
+            signature = subprocess.run(['codesign', '-d', '--verbose=4', str(signed)], capture_output=True, text=True, check=True)
+            assert '(runtime)' in signature.stderr, 'Scanner code must retain hardened runtime'
+            entitlements = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(signed)], capture_output=True, text=True, check=True)
+            assert 'disable-library-validation' not in entitlements.stdout, 'Scanner library validation must stay enabled'
     if BINARY == 'TokenMonitor':
         resources = app / 'Contents/Resources'
         python = resources / 'python/bin/python3'

@@ -179,4 +179,4 @@ and Rename/Remove click behavior still require manual acceptance.
 
 Spotlight index is a detected Shared caches & tools entry with a Settings toggle.
 Its root-owned directory may remain protected even with Full Disk Access; no
-persistent administrator helper or index cleanup is installed. Its **Measure with administrator access…** button offers a manual read-only size check authorized by macOS. See [usage details](docs/USAGE.md#spotlight-index-tracking).
+persistent administrator helper or index cleanup is installed. The working branch contains an optional scanner integration that is not release-ready; ordinary builds cannot enable it. See [usage details](docs/USAGE.md#spotlight-index-tracking).
