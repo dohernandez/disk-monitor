@@ -129,7 +129,7 @@ These are documented limitations, not authorization to change the accepted behav
   output is buffered in memory. The scanner assumes tab/newline-delimited paths;
   filenames containing newlines are not robustly handled.
 - Physical reclamation cannot be inferred by summing APFS clones, overlapping paths,
-  or separately scanned hardlinks. Nix has no scanner; Docker reports host files only.
+  or separately scanned hardlinks. Nix store uses the ordinary folder scanner; Docker reports host files only.
 - Protected-folder access can fail. There is no Full Disk Access onboarding flow.
 - Top-five, save-failure, popup events, and visual contrast
   lack dedicated automated coverage. Self-tests do not constitute full UI validation.
@@ -229,9 +229,10 @@ Protected by macOS (or a partial lower bound), not zero, and do not raise the
 measurement-warning badge. The optional scanner integration is described below; ordinary scans never escalate. Previously complete readings remain saved on failure. A full
 index scan can be expensive because it may contain millions of files.
 
-The Nix store row remains informational: Separate accounting means the app does
-not measure it yet. APFS volume usage can be measured independently, but is not a
-Nix garbage-collection/reclaimable-space estimate.
+Nix store (`/nix/store`) is a detected cache row using the normal access, scan,
+refresh, expansion and saved-reading flow. It reports the directory’s measured
+allocated size, not reclaimable space or a sum of Nix dependency closures. Settings
+can stop or resume tracking without deleting readings. No Nix cleanup is performed.
 
 ## Shared folder access and measurement
 

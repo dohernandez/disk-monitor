@@ -266,16 +266,19 @@ final class Model: ObservableObject {
         Root(path: home + "/.foundry/anvil/tmp", title: "Anvil temporary files"),
         Root(path: home + "/.claude/projects", title: "Claude session history"),
         Root(path: home + "/Library/Containers/com.docker.docker/Data/vms", title: "Docker VM storage"),
-        Root(path: spotlightPath, title: "Spotlight index")
+        Root(path: spotlightPath, title: "Spotlight index"),
+        Root(path: nixStorePath, title: "Nix store")
     ].filter { FileManager.default.fileExists(atPath: $0.path) || readings[$0.path] != nil }
     }
     var caches: [Root] {
         let custom = Set(customCaches.map(\.path))
-        return defaultCacheOptions.filter { !excludedPaths.contains($0.path) && !projectRoots.map(\.path).contains($0.path) && !custom.contains($0.path) } + customCaches
+        return defaultCacheOptions.filter { !excludedPaths.contains($0.path) && !projectRoots.map(\.path).contains($0.path) && !custom.contains($0.path) && !extras.map(\.path).contains($0.path) } + customCaches
     }
     let saveURL: URL
     let spotlightPath: String
-    init(home: String = FileManager.default.homeDirectoryForCurrentUser.path, preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json"), spotlightPath: String = "/System/Volumes/Data/.Spotlight-V100") {
+    let nixStorePath: String
+    init(nixStorePath: String = "/nix/store", home: String = FileManager.default.homeDirectoryForCurrentUser.path, preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json"), spotlightPath: String = "/System/Volumes/Data/.Spotlight-V100") {
+        self.nixStorePath = nixStorePath
         self.spotlightPath = spotlightPath
         self.home = home
         self.saveURL = saveURL
@@ -990,9 +993,6 @@ struct Dashboard: View {
                         .buttonStyle(.plain).foregroundStyle(Palette.accent).font(.system(size: 11))
                     Text("SHARED CACHES & TOOLS").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
                     VStack(spacing: 1) { ForEach(model.caches) { root in FolderRow(model: model, root: root) } }
-                    HStack {
-                        Image(systemName: "shippingbox").foregroundStyle(Palette.accent); Text("Nix store"); Spacer(); Text("Separate accounting").foregroundStyle(Palette.secondary)
-                    }.font(.system(size: 12)).padding(8).help("Nix reclaimable-space inspection is not in this draft. Recursive folder sizes are not a reliable reclamation estimate.")
                     if !model.extras.isEmpty { Text("YOUR FOLDERS").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.secondary); ForEach(model.extras) { root in FolderRow(model: model, root: root) } }
                     Text("Folder sizes may overlap or share APFS storage. They are not summed. Expand folders to find growth; right-click to open in Finder.").font(.system(size: 10)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
                 }.padding(14)
@@ -1209,7 +1209,7 @@ if CommandLine.arguments.contains("--self-test") {
     let portableHome = root.appendingPathComponent("portable-home")
     try fm.createDirectory(at: portableHome.appendingPathComponent("Library/Caches"), withIntermediateDirectories: true)
     let portableURL = root.appendingPathComponent("portable-state/readings.json")
-    let portable = Model(home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let portable = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(portable.projectRoots.isEmpty && portable.caches.count == 1)
     portable.stopTracking(portable.caches[0].path)
     precondition(portable.trackedRoots.isEmpty)
@@ -1223,21 +1223,21 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(portable.measurementLabel(missing.path) == "Not found")
     portable.readings[selected.path] = Reading(bytes: 30*gib, previous: 0, date: Date())
     portable.save()
-    let reopened = Model(home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let reopened = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(reopened.caches.isEmpty && reopened.project.path == selected.path && reopened.extras.count == 1)
     reopened.stopTracking(selected.path)
     precondition(reopened.projectRoots.isEmpty && reopened.readings[selected.path] != nil)
     precondition(!reopened.alerts.contains { $0.path == selected.path } && !reopened.largestFolders.contains { $0.path == selected.path })
     let oldSaved = Saved(readings: [portableHome.path + "/Documents/YeagerAI": complete], extras: [])
     try PrivateReadings.write(JSONEncoder().encode(oldSaved), to: portableURL)
-    let migrated = Model(home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let migrated = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(migrated.projectRoots.count == 1 && migrated.readings[migrated.project.path]?.bytes == complete.bytes)
     migrated.setProjects(selected.path)
     migrated.stopTracking(selected.path)
     precondition(migrated.projectRoots.isEmpty, "Stopping a replacement must not resurrect legacy Projects")
     for fixtureModel in [portable, reopened, migrated] { fixtureModel.timer?.invalidate(); fixtureModel.folderTimer?.invalidate() }
     let multiURL = root.appendingPathComponent("multi-state/readings.json")
-    let multi = Model(home: portableHome.path, saveURL: multiURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let multi = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, saveURL: multiURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     let first = portableHome.appendingPathComponent("first")
     let second = portableHome.appendingPathComponent("second")
     multi.addRoot(first, asProject: true); multi.addRoot(second, asProject: true)
@@ -1257,7 +1257,7 @@ if CommandLine.arguments.contains("--self-test") {
     multi.addRoot(customCache, asProject: false)
     multi.readings[customCache.path] = Reading(bytes: 20*gib, previous: nil, date: Date())
     multi.save()
-    let multiReloaded = Model(home: portableHome.path, saveURL: multiURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let multiReloaded = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, saveURL: multiURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(multiReloaded.largestCount == 8 && multiReloaded.projectRoots.count == 2)
     precondition(multiReloaded.projectRoots.contains { $0.title == "Work repositories" })
     precondition(multiReloaded.caches.contains { $0.path == customCache.path })
@@ -1277,7 +1277,7 @@ if CommandLine.arguments.contains("--self-test") {
     let deletedPrefs = UserDefaults(suiteName: deletedSuite)!
     defer { deletedPrefs.removePersistentDomain(forName: deletedSuite) }
     let deletedState = deletedHome.appendingPathComponent("state/readings.json")
-    let deletedModel = Model(home: deletedHome.path, preferences: deletedPrefs, saveURL: deletedState, spotlightPath: deletedHome.appendingPathComponent("spotlight").path)
+    let deletedModel = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: deletedHome.path, preferences: deletedPrefs, saveURL: deletedState, spotlightPath: deletedHome.appendingPathComponent("spotlight").path)
     deletedModel.timer?.invalidate(); deletedModel.folderTimer?.invalidate()
     deletedModel.projects = [Root(path: deletedHome.path, title: "Fixture")]
     let measuredAt = Date()
@@ -1290,7 +1290,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(!deletedModel.alerts.contains { $0.id == "growth:" + deletedFolder.path })
     precondition(!deletedModel.largestFolders.contains { $0.path == deletedFolder.path })
     precondition(deletedModel.readings[deletedFolder.path]?.bytes == 30 * gib && deletedModel.readings[deletedFolder.path]?.date == measuredAt)
-    let deletedReload = Model(home: deletedHome.path, preferences: deletedPrefs, saveURL: deletedState, spotlightPath: deletedHome.appendingPathComponent("spotlight").path)
+    let deletedReload = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: deletedHome.path, preferences: deletedPrefs, saveURL: deletedState, spotlightPath: deletedHome.appendingPathComponent("spotlight").path)
     deletedReload.timer?.invalidate(); deletedReload.folderTimer?.invalidate()
     precondition(deletedReload.readings[deletedFolder.path]?.missing == true && deletedReload.readings[deletedFolder.path]?.previous == nil)
     precondition(!deletedReload.alerts.contains { $0.id == "growth:" + deletedFolder.path })
@@ -1304,7 +1304,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(result.values[root.appendingPathComponent("folder with spaces").path] != nil)
     precondition(scanner.scan(root.appendingPathComponent("missing").path).error != nil)
     scanner.cancel(); precondition(scanner.scan(root.path).values.isEmpty)
-    let model = Model(saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let model = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     model.toggle(root.path)
     precondition(model.loadingChildren.contains(root.path))
     model.toggle(root.path) // Collapse before the asynchronous directory read completes.
@@ -1438,7 +1438,7 @@ if CommandLine.arguments.contains("--self-test") {
     drainUntil { startupChecked }
     precondition(gate.requirements[ordinary.path] == .fileAccess)
     gate.cancelPending()
-    let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let configured = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)
     precondition(configured.configureSpaceThresholds(critical: 15, warning: 30))
@@ -1459,18 +1459,18 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(configured.timer!.timeInterval == 45 && configured.folderTimer!.timeInterval == 420)
     precondition(!configured.configureIntervals(diskSeconds: 0, folderMinutes: 0))
     precondition(configured.diskInterval == 45 && configured.folderInterval == 420)
-    let restored = Model(preferences: UserDefaults(suiteName: suite)!, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let restored = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, preferences: UserDefaults(suiteName: suite)!, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(restored.diskInterval == 45 && restored.folderInterval == 420)
     precondition(restored.spaceThresholds.critical == 15 && restored.spaceThresholds.warning == 30)
     prefs.set(90, forKey: "criticalFreePercent"); prefs.set(20, forKey: "warningFreePercent")
-    let invalidThresholds = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    let invalidThresholds = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(invalidThresholds.spaceThresholds.critical == 10 && invalidThresholds.spaceThresholds.warning == 20)
     invalidThresholds.timer?.invalidate(); invalidThresholds.folderTimer?.invalidate()
     configured.timer?.invalidate(); configured.folderTimer?.invalidate()
     restored.timer?.invalidate(); restored.folderTimer?.invalidate()
     prefs.removePersistentDomain(forName: suite)
     prefs.set(ScannerRecovery.bootSession() ?? "", forKey: "spotlightPendingScanBoot")
-    let interrupted = Model(home: portableHome.path, preferences: prefs, saveURL: root.appendingPathComponent("interrupted/readings.json"))
+    let interrupted = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, preferences: prefs, saveURL: root.appendingPathComponent("interrupted/readings.json"))
     precondition(interrupted.folderAccess.uncertain)
     interrupted.scan([Root(path: root.path, title: "Fixture")])
     precondition(!interrupted.scanning && interrupted.status.contains("Restart your Mac"))
@@ -1480,7 +1480,7 @@ if CommandLine.arguments.contains("--self-test") {
     let spotlightFolder = root.appendingPathComponent("spotlight-fixture")
     try fm.createDirectory(at: spotlightFolder, withIntermediateDirectories: true)
     let spotlightState = root.appendingPathComponent("spotlight-state/readings.json")
-    let spotlightModel = Model(home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
+    let spotlightModel = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
     precondition(!spotlightModel.spotlightEnabled, "New installations require the folder toggle before tracking")
     spotlightModel.setCacheEnabled(Root(path: spotlightFolder.path, title: "Spotlight index"), true)
     precondition(spotlightModel.caches.contains { $0.path == spotlightFolder.path && $0.title == "Spotlight index" })
@@ -1491,7 +1491,7 @@ if CommandLine.arguments.contains("--self-test") {
     while spotlightModel.scanning && Date() < stopTrackingDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
     precondition(!spotlightModel.scanning, "Stopping tracking cancels the pending access check")
     precondition(!spotlightModel.caches.contains { $0.path == spotlightFolder.path })
-    let spotlightReloaded = Model(home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
+    let spotlightReloaded = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
     precondition(spotlightReloaded.defaultCacheOptions.contains { $0.path == spotlightFolder.path })
     precondition(!spotlightReloaded.caches.contains { $0.path == spotlightFolder.path })
     precondition(spotlightReloaded.readings[spotlightFolder.path]?.bytes == 48*gib)
@@ -1502,6 +1502,31 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(mergedReading(old: authorized, bytes: 99999, error: nil, date: Date()).previous == nil)
     spotlightModel.timer?.invalidate(); spotlightModel.folderTimer?.invalidate()
     spotlightReloaded.timer?.invalidate(); spotlightReloaded.folderTimer?.invalidate()
+    // Nix is a normal detected folder, with real fixture measurement and saved state.
+    let nixFixture = root.appendingPathComponent("nix/store")
+    try fm.createDirectory(at: nixFixture, withIntermediateDirectories: true)
+    try Data(repeating: 7, count: 1024 * 1024).write(to: nixFixture.appendingPathComponent("package"))
+    let nixState = root.appendingPathComponent("nix-state/readings.json")
+    let nixModel = Model(nixStorePath: nixFixture.path, home: portableHome.path, preferences: prefs, saveURL: nixState)
+    let nixRoot = nixModel.caches.first { $0.path == nixFixture.path }!
+    precondition(nixRoot.title == "Nix store")
+    nixModel.refreshFolder(nixRoot)
+    drainUntil { !nixModel.scanning }
+    precondition(nixModel.readings[nixFixture.path]!.bytes >= 1024 * 1024)
+    precondition(nixModel.readings[nixFixture.path]?.administratorMeasured != true)
+    precondition(nixModel.largestFolders.contains { $0.path == nixFixture.path })
+    nixModel.stopTracking(nixFixture.path)
+    precondition(!nixModel.trackedRoots.contains { $0.path == nixFixture.path })
+    let nixReloaded = Model(nixStorePath: nixFixture.path, home: portableHome.path, preferences: prefs, saveURL: nixState)
+    precondition(nixReloaded.readings[nixFixture.path]!.bytes >= 1024 * 1024)
+    precondition(!nixReloaded.caches.contains { $0.path == nixFixture.path })
+    nixReloaded.setCacheEnabled(nixRoot, true)
+    drainUntil { !nixReloaded.scanning }
+    precondition(nixReloaded.caches.contains { $0.path == nixFixture.path })
+    nixReloaded.extras.append(nixRoot)
+    precondition(nixReloaded.trackedRoots.filter { $0.path == nixFixture.path }.count == 1)
+    nixModel.timer?.invalidate(); nixModel.folderTimer?.invalidate()
+    nixReloaded.timer?.invalidate(); nixReloaded.folderTimer?.invalidate()
     try fm.removeItem(at: root)
     print("PASS: scanner, folders, scan/queue states, alerts, configurable timers and preference persistence")
 } else {
