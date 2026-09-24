@@ -76,7 +76,7 @@ func intervalText(_ seconds: Int) -> String { seconds % 60 == 0 ? "\(seconds / 6
 func sizeText(_ bytes: Int64) -> String {
     let f = ByteCountFormatter(); f.countStyle = .binary; f.allowedUnits = [.useGB, .useMB, .useKB]; return f.string(fromByteCount: bytes)
 }
-struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil; var administratorMeasured: Bool? = nil }
+struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil; var administratorMeasured: Bool? = nil; var missing: Bool? = nil }
 struct Root: Codable, Identifiable { var path: String; var title: String; var id: String { path } }
 struct Saved: Codable { var readings: [String: Reading]; var extras: [Root]; var projectPath: String? = nil; var excludedPaths: [String]? = nil; var projects: [Root]? = nil; var customCaches: [Root]? = nil; var largestCount: Int? = nil }
 struct DiskAlert: Identifiable {
@@ -144,7 +144,17 @@ func scopedScanResult(values:[String:Int64],root:String,detail:String)->ScanResu
 }
 func mergedReading(old:Reading?,bytes:Int64,error:String?,date:Date,protectedOnly:Bool = false)->Reading {
     if error != nil,let old=old,old.incomplete != true {return old}
-    return Reading(bytes:bytes,previous:error==nil && old?.incomplete != true && old?.administratorMeasured != true ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error,protectedOnly:error != nil && protectedOnly)
+    return Reading(bytes:bytes,previous:error==nil && old?.incomplete != true && old?.administratorMeasured != true && old?.missing != true ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error,protectedOnly:error != nil && protectedOnly)
+}
+// Only explicit absence is deletion evidence. EACCES/EPERM/I/O failures are unknown.
+func confirmsMissingPath(status: Int32, error: Int32) -> Bool {
+    status != 0 && (error == ENOENT || error == ENOTDIR)
+}
+func pathIsConfirmedMissing(_ path: String) -> Bool {
+    var info = stat()
+    let result = lstat(path, &info)
+    let failure = errno
+    return confirmsMissingPath(status: result, error: failure)
 }
 final class Scanner {
     private let lock = NSLock()
@@ -362,7 +372,35 @@ final class Model: ObservableObject {
         if isProtected(path) { return "Protected by macOS" }
         return errors[path] == nil ? "Not scanned" : "Unreadable"
     }
+    private var checkingGrowthPaths = false
+    func refreshMissingGrowthPaths() {
+        guard !checkingGrowthPaths else { return }
+        let snapshot = readings.filter { _, value in
+            value.missing != true && value.incomplete != true && value.previous != nil && value.bytes - value.previous! >= 10 * gib
+        }
+        guard !snapshot.isEmpty else { return }
+        checkingGrowthPaths = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let missing = snapshot.keys.filter(pathIsConfirmedMissing)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.checkingGrowthPaths = false
+                var changed = false
+                for path in missing {
+                    guard var current = self.readings[path], let checked = snapshot[path],
+                          current.date == checked.date, current.bytes == checked.bytes,
+                          current.previous == checked.previous else { continue }
+                    // Keep the historical size/date, but end its growth comparison.
+                    // A recreated folder needs a successful fresh baseline first.
+                    current.missing = true; current.previous = nil
+                    self.readings[path] = current; changed = true
+                }
+                if changed { self.save(); self.onStatus?() }
+            }
+        }
+    }
     func refreshCapacity() {
+        refreshMissingGrowthPaths()
         if let a = try? FileManager.default.attributesOfFileSystem(forPath: home), let f = a[.systemFreeSize] as? NSNumber, let total = a[.systemSize] as? NSNumber {
             free = f.int64Value; capacity = total.int64Value
         } else { capacity = 0 }
@@ -378,7 +416,7 @@ final class Model: ObservableObject {
                 result.append(DiskAlert(id: "scan:" + root.path, critical: false, title: "Incomplete scan · " + root.title, detail: error ?? readings[root.path]?.scanError ?? "Some contents could not be measured. Rescan the folder for specific error details.", path: root.path, measurementIssue: true))
             }
         }
-        let growth = readings.filter { isTracked($0.key) && $0.value.incomplete != true && $0.value.previous != nil && $0.value.bytes - $0.value.previous! >= 10 * gib }.sorted {
+        let growth = readings.filter { isTracked($0.key) && $0.value.missing != true && $0.value.incomplete != true && $0.value.previous != nil && $0.value.bytes - $0.value.previous! >= 10 * gib }.sorted {
             ($0.value.bytes - $0.value.previous!) > ($1.value.bytes - $1.value.previous!)
         }
         var selected: [String] = []
@@ -429,7 +467,7 @@ final class Model: ObservableObject {
         })
         for root in caches where root.path != library { candidates.insert(root.path) }
         for root in extras { candidates.insert(root.path) }
-        let sorted = candidates.filter { readings[$0] != nil && isTracked($0) }.sorted {
+        let sorted = candidates.filter { readings[$0] != nil && readings[$0]?.missing != true && isTracked($0) }.sorted {
             let a = readings[$0]!.bytes, b = readings[$1]!.bytes
             return a == b ? $0 < $1 : a > b
         }
@@ -496,7 +534,7 @@ final class Model: ObservableObject {
     func scan(_ roots: [Root]) {
         guard !scanning else { return }
         let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
-        guard !existing.isEmpty else { status = "None of these folders exists"; return }
+        guard !existing.isEmpty else { refreshMissingGrowthPaths(); status = "None of these folders exists"; return }
         scanning = true; scanner.reset(); queuedPaths = Set(existing.map(\.path)); status = "Preparing scan…"
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
@@ -1249,6 +1287,39 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(!multiReloaded.largestFolders.contains { $0.path.hasPrefix(second.path + "/") })
     precondition(multiReloaded.readings[second.path + "/repo-7"] != nil)
     multi.timer?.invalidate();multi.folderTimer?.invalidate();multiReloaded.timer?.invalidate();multiReloaded.folderTimer?.invalidate()
+    precondition(confirmsMissingPath(status: -1, error: ENOENT))
+    precondition(confirmsMissingPath(status: -1, error: ENOTDIR))
+    for failure in [EACCES, EPERM, EIO] { precondition(!confirmsMissingPath(status: -1, error: failure)) }
+    precondition(!confirmsMissingPath(status: 0, error: ENOENT))
+    let deletedHome = root.appendingPathComponent("deleted-growth-fixture")
+    let deletedFolder = deletedHome.appendingPathComponent("build-target")
+    try FileManager.default.createDirectory(at: deletedFolder, withIntermediateDirectories: true)
+    let deletedSuite = "DiskMonitor.deleted-test." + UUID().uuidString
+    let deletedPrefs = UserDefaults(suiteName: deletedSuite)!
+    defer { deletedPrefs.removePersistentDomain(forName: deletedSuite) }
+    let deletedState = deletedHome.appendingPathComponent("state/readings.json")
+    let deletedModel = Model(home: deletedHome.path, preferences: deletedPrefs, saveURL: deletedState, spotlightPath: deletedHome.appendingPathComponent("spotlight").path)
+    deletedModel.timer?.invalidate(); deletedModel.folderTimer?.invalidate()
+    deletedModel.projects = [Root(path: deletedHome.path, title: "Fixture")]
+    let measuredAt = Date()
+    deletedModel.readings[deletedFolder.path] = Reading(bytes: 30 * gib, previous: 10 * gib, date: measuredAt)
+    precondition(deletedModel.alerts.contains { $0.id == "growth:" + deletedFolder.path })
+    try FileManager.default.removeItem(at: deletedFolder)
+    deletedModel.refreshMissingGrowthPaths()
+    let deletionDeadline = Date().addingTimeInterval(5)
+    while deletedModel.readings[deletedFolder.path]?.missing != true && Date() < deletionDeadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+    precondition(!deletedModel.alerts.contains { $0.id == "growth:" + deletedFolder.path })
+    precondition(!deletedModel.largestFolders.contains { $0.path == deletedFolder.path })
+    precondition(deletedModel.readings[deletedFolder.path]?.bytes == 30 * gib && deletedModel.readings[deletedFolder.path]?.date == measuredAt)
+    let deletedReload = Model(home: deletedHome.path, preferences: deletedPrefs, saveURL: deletedState, spotlightPath: deletedHome.appendingPathComponent("spotlight").path)
+    deletedReload.timer?.invalidate(); deletedReload.folderTimer?.invalidate()
+    precondition(deletedReload.readings[deletedFolder.path]?.missing == true && deletedReload.readings[deletedFolder.path]?.previous == nil)
+    precondition(!deletedReload.alerts.contains { $0.id == "growth:" + deletedFolder.path })
+    try FileManager.default.createDirectory(at: deletedFolder, withIntermediateDirectories: false)
+    let rebased = mergedReading(old: deletedReload.readings[deletedFolder.path], bytes: 40 * gib, error: nil, date: Date())
+    precondition(rebased.previous == nil && rebased.missing != true)
+    let nextReading = mergedReading(old: rebased, bytes: 51 * gib, error: nil, date: Date())
+    precondition(nextReading.previous == 40 * gib)
     let scanner = Scanner(), result = scanner.scan(root.path)
     precondition(result.error == nil && (result.values[root.path] ?? 0) >= 1024 * 1024)
     precondition(result.values[root.appendingPathComponent("folder with spaces").path] != nil)

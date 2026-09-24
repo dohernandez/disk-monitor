@@ -161,3 +161,16 @@ Manual release checks (not established by compilation/fixtures):
 - Failed/CPU-limited/permission-denied measurement retains saved size; no zero is invented.
 - Test the system prompt and Full Disk Access attribution from an installed release on
   both architectures. Ad-hoc build/self-tests are not proof of this interactive path.
+
+## Deleted growth candidates
+
+Free-space refresh and completed scan batches asynchronously check saved growth
+candidates with metadata-only lstat calls. ENOENT/ENOTDIR confirms absence;
+permission and I/O failures do not. Confirmed absent paths stop producing growth
+alerts and leave the largest-folder ranking. Their saved bytes/date remain; an
+optional `missing` field persists this state and the old comparison is cleared.
+A successful scan of a recreated folder establishes a new baseline before growth
+can be reported again. Legacy readings decode without the optional field. A late
+validation result cannot overwrite a newer reading. No monitored file is changed.
+Fixture checks cover deletion, retained history, restart, recreation and error
+classification; live UI behavior remains a separate manual acceptance check.
