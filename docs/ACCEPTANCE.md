@@ -150,10 +150,16 @@ and Rename/Remove click behavior still require manual acceptance.
 - Release builds must include the signed scanner; missing credentials or helper fail packaging.
 - Refresh waits for current availability, opens setup when needed, and otherwise measures.
 - No permanent setup link appears under an idle Spotlight row. Settings retains scanner management.
-- A manual access failure opens guided setup; scheduled failures never request approval.
+- A manual access failure opens guided setup; periodic scans never register new helpers.
+- One Spotlight toggle controls tracking, scanner registration and scheduling.
+- On enables registration; off cancels owned work and unregisters. Rapid on/off preserves the latest choice.
+- Startup rechecks enabled Spotlight even with a recent saved size. Off startup never registers.
+- Missing approval/access opens guidance; already-granted access does not prompt.
+- Updates use the same startup path after restart. No extra scanner/schedule toggle exists.
+- Startup preflight never runs du or traverses the index; incompatible helpers require repair.
 - Signed app/helper mismatch, wrong peer, modified code and arbitrary paths fail closed.
 - Tests never register a daemon, request credentials or scan the real Spotlight index.
-- With accepted packaging, verify setup, explicit consent, scheduled opt-in, row refresh,
+- With accepted packaging, verify setup, the Spotlight toggle, startup access checks, row refresh,
   Stop, saved result timestamps, cooldown and retry after setup failure.
 - Verify no parallel ordinary/privileged scan; late/cancelled results cannot overwrite
   saved readings. Disconnect after measure must not pretend the scan has exited.
@@ -190,3 +196,10 @@ classification; live UI behavior remains a separate manual acceptance check.
   Access, background approval and launch failure without promising universal access.
 - Opening Info performs no authorization, registration or scan. Added folders cannot
   invoke the Spotlight-only administrator operation.
+
+Single-toggle regression fixtures exercise registration → approval → access denial →
+ready → unregister, fresh access checks, disabled startup, disable during registration
+and disable during measurement. They use injected replies and never register a helper.
+CI additionally compiles the actual helper and bridge with a dummy public identity;
+no endpoint is executed by that compilation check. Live permission UI remains a
+separate manual check; old preview screenshots do not prove the new flow.

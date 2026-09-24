@@ -18,7 +18,7 @@ import ServiceManagement
     }
     static func main() {
         guard CommandLine.arguments.count == 2,
-              ["status", "register", "unregister", "measure", "cancel"].contains(CommandLine.arguments[1]) else { exit(2) }
+              ["status", "register", "unregister", "measure", "cancel", "check"].contains(CommandLine.arguments[1]) else { exit(2) }
         let operation = CommandLine.arguments[1]
         let service = SMAppService.daemon(plistName: HelperIdentity.serviceID + ".plist")
         if operation == "status" { finish(BridgeMessage(event: "status", status: service.status.rawValue)) }
@@ -49,7 +49,13 @@ import ServiceManagement
             proxy.cancel { accepted in finish(BridgeMessage(event: "cancelRequested", status: accepted ? 1 : 0)) }
         } else {
             proxy.ping { version in DispatchQueue.main.async {
-                guard version == 1 else { finish(BridgeMessage(event: "launchFailed", error: "Incompatible scanner")) }
+                guard version == 2 else { finish(BridgeMessage(event: "launchFailed", error: "Incompatible scanner")) }
+                if operation == "check" {
+                    proxy.checkAccess { status in DispatchQueue.main.async {
+                        finish(BridgeMessage(event: "access", status: status))
+                    } }
+                    return
+                }
                 connected = true; started = ProcessInfo.processInfo.systemUptime
                 emit(BridgeMessage(event: "measuring"))
                 proxy.measure { data in DispatchQueue.main.async {

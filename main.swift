@@ -275,7 +275,9 @@ final class Model: ObservableObject {
         let folder = preferences.object(forKey: "folderRefreshSeconds") as? Int ?? 300
         diskInterval = (5...3600).contains(disk) ? disk : 30
         folderInterval = (60...86400).contains(folder) ? folder : 300
-        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; projectPath = saved.projectPath; excludedPaths = Set(saved.excludedPaths ?? []); projects = saved.projects; customCaches = saved.customCaches ?? []; largestCount = (1...50).contains(saved.largestCount ?? 5) ? (saved.largestCount ?? 5) : 5; status = "Showing saved folder measurements" }
+        var restoredSettings = false
+        if (try? PrivateReadings.prepare(saveURL)) != nil, let data = try? Data(contentsOf: saveURL), let saved = try? JSONDecoder().decode(Saved.self, from: data) { readings = saved.readings; extras = saved.extras; projectPath = saved.projectPath; excludedPaths = Set(saved.excludedPaths ?? []); projects = saved.projects; customCaches = saved.customCaches ?? []; largestCount = (1...50).contains(saved.largestCount ?? 5) ? (saved.largestCount ?? 5) : 5; status = "Showing saved folder measurements"; restoredSettings = true }
+        if !restoredSettings { excludedPaths.insert(spotlightPath) }
         lastMeasuredAt = readings.values.map(\.date).max()
         refreshCapacity()
         scheduleTimers()
@@ -302,6 +304,17 @@ final class Model: ObservableObject {
         preferences.set(warning, forKey: "warningFreePercent")
         onStatus?()
         return true
+    }
+    var spotlightEnabled: Bool { trackedRoots.contains { $0.path == spotlightPath } }
+    func startFolderMonitoring() {
+        guard spotlightPath == SpotlightMeasurement.path else { scanMissingRoots(); return }
+        spotlightAccess.setEnabled(spotlightEnabled) { [weak self] in self?.scanMissingRoots() }
+    }
+    func setCacheEnabled(_ root: Root, _ enabled: Bool) {
+        if !enabled { stopTracking(root.path); return }
+        excludedPaths.remove(root.path); extras.removeAll { $0.path == root.path }
+        save(); onStatus?()
+        if root.path == SpotlightMeasurement.path { spotlightAccess.setEnabled(true) }
     }
     func scanAllFolders() {
         scan(trackedRoots)
@@ -474,13 +487,9 @@ final class Model: ObservableObject {
     func refreshFolder(_ root: Root) {
         guard !scanning else { return }
         if root.path == SpotlightMeasurement.path {
-            spotlightAccess.refreshAvailability { [weak self] in
-                guard let self, !self.scanning else { return }
-                guard self.spotlightAccess.packageValid, self.spotlightAccess.registration == 1,
-                      !self.spotlightAccess.repair, !self.spotlightAccess.needsAccess,
-                      !self.spotlightAccess.awaitingOff, !self.spotlightAccess.uncertain else {
-                    self.spotlightAccess.openSetup(); return
-                }
+            spotlightAccess.setEnabled(spotlightEnabled) { [weak self] in
+                guard let self, !self.scanning, self.spotlightEnabled,
+                      self.spotlightAccess.ready else { return }
                 self.scan([root], manualSpotlight: true)
             }
             return
@@ -511,8 +520,7 @@ final class Model: ObservableObject {
         let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard !existing.isEmpty else { refreshMissingGrowthPaths(); status = "None of these folders exists"; return }
         let includesSpotlight = existing.contains { $0.path == SpotlightMeasurement.path }
-        if includesSpotlight { spotlightAccess.refreshAvailability() }
-        let useHelper = includesSpotlight && spotlightAccess.packageValid && spotlightAccess.registration == 1
+        let useHelper = includesSpotlight && spotlightAccess.enabled && spotlightAccess.ready && spotlightAccess.packageValid && spotlightAccess.registration == 1
             && !spotlightAccess.repair && !spotlightAccess.needsAccess
             && (manualSpotlight || spotlightAccess.canAutomaticallyMeasure)
         scanning = true; scanner.reset(); queuedPaths = Set(existing.map(\.path)); status = "Preparing scan…"
@@ -601,6 +609,7 @@ final class Model: ObservableObject {
         extras.removeAll { $0.path == path }
         if project.path == path { projectPath = nil }
         save(); onStatus?()
+        if path == SpotlightMeasurement.path { spotlightAccess.setEnabled(false) }
     }
     func setProjects(_ path: String) {
         if project.path != path { excludedPaths.insert(project.path) }
@@ -616,6 +625,7 @@ final class Model: ObservableObject {
         largestCount = count; save()
     }
     func addRoot(_ url: URL, asProject: Bool) {
+        if url.path == SpotlightMeasurement.path { setCacheEnabled(Root(path: url.path, title: "Spotlight index"), true); return }
         let current = projectRoots
         let root = Root(path: url.path, title: url.lastPathComponent)
         projects = current.filter { $0.path != url.path }
@@ -642,6 +652,7 @@ final class Model: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url { setProjects(url.path) }
     }
     func addFolder(_ url: URL) {
+        if url.path == SpotlightMeasurement.path { setCacheEnabled(Root(path: url.path, title: "Spotlight index"), true); return }
         excludedPaths.remove(url.path)
         if !trackedRoots.contains(where: { $0.path == url.path }) { extras.append(Root(path: url.path, title: url.lastPathComponent)) }
         save(); onStatus?()
@@ -830,15 +841,14 @@ struct FolderSettings: View {
             Text("Caches & tools").fontWeight(.semibold)
             ForEach(model.defaultCacheOptions.filter { candidate in !model.projectRoots.contains { $0.path == candidate.path } && !model.customCaches.contains { $0.path == candidate.path } }) { root in
                 Toggle(root.title, isOn: Binding(get: {!model.excludedPaths.contains(root.path)}, set: {enabled in
-                    if enabled {model.excludedPaths.remove(root.path);model.extras.removeAll {$0.path == root.path};model.save();model.onStatus?()}
-                    else {model.stopTracking(root.path)}
+                    model.setCacheEnabled(root, enabled)
                 }))
             }
             ForEach(model.customCaches) { root in
                 HStack { Text(root.title); Spacer(); Button("Remove") {model.stopTracking(root.path)} }.help(root.path)
             }
-            Button("Spotlight scanner settings…") { model.spotlightAccess.openSetup() }.disabled(model.scanning && !model.spotlightAccess.uncertain)
-            Text("Use the Spotlight row’s refresh arrow to measure or set up access. Some folders remain protected even with Full Disk Access. Other folders do not receive administrator access. See Info for general access guidance.").font(.caption).foregroundStyle(Palette.secondary)
+            Button("Spotlight access…") { model.spotlightAccess.checkSetup(); model.spotlightAccess.openSetup() }.disabled(model.scanning && !model.spotlightAccess.uncertain)
+            Text("Spotlight’s toggle also enables or disables its background scanner. Enabling it checks macOS approval and access; enabled Spotlight is checked again at app startup. Other folders never receive administrator access. See Info for general access guidance.").font(.caption).foregroundStyle(Palette.secondary)
             Button("Add cache folders…") {model.chooseRoots(asProject: false)}
         }.font(.system(size: 11))
     }
@@ -985,7 +995,7 @@ struct Dashboard: View {
                         Text("Folders protected by macOS").font(.headline).foregroundStyle(Palette.primary)
                         Text("Protected by macOS means a permission restriction prevented a complete measurement; it does not mean the folder is empty. Partial · protected contents shows only the readable portion. Earlier complete sizes keep their original measurement date.")
                         Text("For any affected folder, check System Settings → Privacy & Security → Full Disk Access for Disk Monitor. If you choose to allow access, reopen the app and refresh that folder. Full Disk Access grants broad access and may not unlock every system-owned folder.")
-                        Text("After an update, check access again if a folder becomes protected. Background scanner approval, Full Disk Access and administrator authorization are separate. Only follow the setup steps offered for that folder; a scanner launch failure is not fixed by changing disk access.")
+                        Text("When Spotlight is enabled, Disk Monitor checks its scanner approval and access at app startup and when you turn its toggle on. Updates restart the app and use that same check. Missing permissions open setup guidance. Turning Spotlight off also unregisters its scanner. Other protected folders use the Full Disk Access guidance above.")
                         Text("Adding a folder never grants administrator access. Some system folders need a separately supported measurement method and may remain protected. Disk Monitor never changes folder permissions or deletes monitored files.")
                     }.font(.system(size: 12)).foregroundStyle(Palette.secondary).padding(20)
                 }
@@ -1093,7 +1103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView: Dashboard(model: model))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.model.scanMissingRoots() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.model.startFolderMonitoring() }
         if CommandLine.arguments.contains("--show") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.toggle() } }
     }
     func updateStatusIcon() {
@@ -1386,6 +1396,52 @@ if CommandLine.arguments.contains("--self-test") {
     availabilityReply?(BridgeMessage(event: "packageFailed"))
     precondition(availabilityCompletions == 3 && accessFixture.registration == 0 && !accessFixture.packageValid,
                  "A failed fresh check must clear previously approved availability")
+    var lifecycleOperations: [String] = []
+    var lifecycleReplies: [(BridgeMessage) -> Void] = []
+    var setupPresentations = 0
+    let lifecycle = SpotlightAccess(preferences: prefs, operation: { operation, reply in
+        lifecycleOperations.append(operation); lifecycleReplies.append(reply)
+    }, presentSetup: { setupPresentations += 1 })
+    func answerLifecycle(_ event: String, _ status: Int) {
+        lifecycleReplies.removeFirst()(BridgeMessage(event: event, status: status))
+    }
+    // One toggle registers and asks only for the macOS approval that is missing.
+    lifecycle.setEnabled(true)
+    answerLifecycle("status", 3); answerLifecycle("status", 2)
+    precondition(lifecycleOperations == ["status", "register"] && setupPresentations == 1)
+    precondition(lifecycle.enabled && !lifecycle.ready)
+    // Startup/return from approval checks actual access, not just registration.
+    lifecycle.setEnabled(true)
+    answerLifecycle("status", 1); answerLifecycle("access", 1)
+    precondition(lifecycle.needsAccess && !lifecycle.ready && setupPresentations == 2)
+    lifecycle.setEnabled(true)
+    answerLifecycle("status", 1); answerLifecycle("access", 0)
+    precondition(lifecycle.ready && lifecycle.canAutomaticallyMeasure && !lifecycle.needsAccess)
+    precondition(setupPresentations == 2, "Already-granted access must not prompt again")
+    // Disabling the same toggle unregisters; startup with it off never registers.
+    lifecycle.setEnabled(false)
+    answerLifecycle("status", 1); answerLifecycle("status", 3)
+    precondition(lifecycleOperations.last == "unregister" && !lifecycle.enabled && !lifecycle.ready)
+    lifecycle.setEnabled(false); answerLifecycle("status", 3)
+    precondition(lifecycleOperations.last == "status" && lifecycleReplies.isEmpty)
+    // Off while registration is in flight must win over a late successful register.
+    lifecycle.setEnabled(true); answerLifecycle("status", 3)
+    lifecycle.setEnabled(false); answerLifecycle("status", 1)
+    answerLifecycle("status", 1); answerLifecycle("status", 3)
+    precondition(!lifecycle.enabled && !lifecycle.ready && lifecycleOperations.last == "unregister")
+    precondition(!lifecycleOperations.contains("measure"), "Startup checks never run a size scan")
+    // Off during a measurement waits for owned cancellation before unregistering.
+    lifecycle.setEnabled(true); answerLifecycle("status", 1); answerLifecycle("access", 0)
+    var cancelledResult: Measurement?
+    lifecycle.measure { cancelledResult = $0 }
+    let measurementReply = lifecycleReplies.removeFirst()
+    lifecycle.setEnabled(false)
+    precondition(lifecycleOperations.last == "cancel")
+    answerLifecycle("cancelRequested", 1)
+    measurementReply(BridgeMessage(event: "result", measurement: Measurement(bytes: 100, finishedAt: Date(), error: nil)))
+    precondition(cancelledResult?.bytes == nil && cancelledResult?.error == "Measurement cancelled")
+    answerLifecycle("status", 1); answerLifecycle("status", 3)
+    precondition(lifecycleOperations.last == "unregister" && !lifecycle.busy && !lifecycle.enabled)
     let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)
@@ -1429,6 +1485,8 @@ if CommandLine.arguments.contains("--self-test") {
     try fm.createDirectory(at: spotlightFolder, withIntermediateDirectories: true)
     let spotlightState = root.appendingPathComponent("spotlight-state/readings.json")
     let spotlightModel = Model(home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
+    precondition(!spotlightModel.spotlightEnabled, "New installations require the Spotlight toggle before registration")
+    spotlightModel.setCacheEnabled(Root(path: spotlightFolder.path, title: "Spotlight index"), true)
     precondition(spotlightModel.caches.contains { $0.path == spotlightFolder.path && $0.title == "Spotlight index" })
     spotlightModel.readings[spotlightFolder.path] = Reading(bytes: 48*gib, date: Date())
     precondition(spotlightModel.largestFolders.contains { $0.path == spotlightFolder.path })

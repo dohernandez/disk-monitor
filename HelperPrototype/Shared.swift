@@ -18,6 +18,7 @@ enum HelperIdentity {
     // Authentication-only handshake: no scan or filesystem access.
     func cancel(withReply reply: @escaping (Bool) -> Void)
     func ping(withReply reply: @escaping (Int) -> Void)
+    func checkAccess(withReply reply: @escaping (Int) -> Void)
     func measure(withReply reply: @escaping (Data) -> Void)
 }
 struct Measurement: Codable {
