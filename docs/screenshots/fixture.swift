@@ -26,8 +26,13 @@ let sizes: [(String, Int64)] = [
     (model.home + "/Library/Containers/com.docker.docker/Data/vms", 9)]
 for (path, size) in sizes {model.readings[path] = Reading(bytes: size*gib, previous: size*gib - 104_857_600, date: now)}
 
-let view = NSHostingView(rootView: Dashboard(model: model).environment(\.controlActiveState, .active))
-view.frame = NSRect(x: 0, y: 0, width: 440, height: CommandLine.arguments.contains("settings") ? 1600 : 690)
+let spotlightPreview = CommandLine.arguments.contains("spotlight")
+let content: AnyView = spotlightPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
+    Text("SHARED CACHES & TOOLS").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.secondary)
+    FolderRow(model: model, root: Root(path: model.spotlightPath, title: "Spotlight index"))
+}.padding(16).frame(width: 440, height: 150).foregroundStyle(Palette.primary).background(Palette.background)) : AnyView(Dashboard(model: model))
+let view = NSHostingView(rootView: content.environment(\.controlActiveState, .active))
+view.frame = NSRect(x: 0, y: 0, width: 440, height: spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
 let window = PreviewWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
 window.contentView = view
 window.appearance = NSAppearance(named: .darkAqua)

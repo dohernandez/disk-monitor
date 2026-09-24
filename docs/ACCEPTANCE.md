@@ -142,4 +142,22 @@ and Rename/Remove click behavior still require manual acceptance.
 - Root-only access must stay protected/partial, never zero; do not grant privileges
   or rebuild the index as an acceptance shortcut.
 - Native toggle/click behavior and successful administrator-owned index measurement
-  remain manual checks; the app has no privileged measurement helper.
+  remain manual checks; the app installs no persistent privileged helper.
+
+## Manual Spotlight authorization
+
+Automated self-tests compile (never execute) the authorization script, syntax-check the shell command, and exercise its path guards without elevation (system directory accepted; user-owned, symlink and missing directories rejected). They reject wrong
+paths, malformed/multiline/negative/overflow/nonzero-exit totals, and verify cancellation,
+failure, successful persistence and cross-method growth suppression. Fixture-injected
+paths cannot initiate administrator measurement. No test prompts for credentials or
+scans the real index.
+
+Manual release checks (not established by compilation/fixtures):
+- Click the Spotlight action, review the explanation, cancel; no authorization starts.
+- Continue and cancel the macOS dialog; old size/date remain and scanning unlocks.
+- Authorize on a test Mac: only a total appears, saved with date and administrator label.
+- During measurement other scans, Stop, Quit and updater relaunch are blocked; popup
+  can close/reopen. Completion restores normal controls. Normal timers never prompt.
+- Failed/CPU-limited/permission-denied measurement retains saved size; no zero is invented.
+- Test the system prompt and Full Disk Access attribution from an installed release on
+  both architectures. Ad-hoc build/self-tests are not proof of this interactive path.

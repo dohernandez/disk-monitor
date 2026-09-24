@@ -183,10 +183,45 @@ measurements. The path is injectable for fixture tests; tests never scan the rea
 Scans use the existing serial, cancellable directory scanner. Root ownership can
 prevent measurement even with Full Disk Access. Permission-only failures display
 Protected by macOS (or a partial lower bound), not zero, and do not raise the
-measurement-warning badge. No administrator helper, sudo prompt, index deletion or
-rebuild is added. Previously complete readings remain saved on failure. A full
+measurement-warning badge. The optional manual administrator measurement is described below; ordinary scans never escalate. Previously complete readings remain saved on failure. A full
 index scan can be expensive because it may contain millions of files.
 
 The Nix store row remains informational: Separate accounting means the app does
 not measure it yet. APFS volume usage can be measured independently, but is not a
 Nix garbage-collection/reclaimable-space estimate.
+
+## Manual administrator measurement
+
+The Spotlight row has **Measure with administrator access…**. After an explanation
+and Continue, macOS authorizes a fixed read-only size check. The app never requests,
+receives or stores the password. It installs no privileged helper, daemon, login
+item or sudoers entry. Automatic scans remain unprivileged; there is no automatic
+retry with administrator access. macOS may reuse authorization briefly for the same
+script ([AppleScript command reference](https://developer.apple.com/library/archive/documentation/AppleScript/Conceptual/AppleScriptLangGuide/reference/ASLR_cmds.html)).
+
+The compiled command accepts no user input. It checks the fixed Spotlight directory
+and its ancestors for symlinks, ACLs, root ownership and a restrictive allowlist of modes,
+then runs Apple's `/usr/bin/du -P -x -s -k` in a clean environment. Links are not
+followed and mounted filesystems are not crossed. Only a validated single total for
+that exact path is accepted. There are no elevated writes to monitored files, no
+index deletion/rebuild, and no app/cache/external scripts executed as root. The app
+saves the resulting size and date with its ordinary user permissions.
+
+Cancellation at the system authorization dialog, errors, incomplete output and
+malformed results retain the previous reading and date. Successful results show
+**Administrator · saved size**. Growth is not calculated between this summary and
+ordinary recursive readings, which have different traversal scope. An optional
+`administratorMeasured` field preserves the distinction across restart; old JSON
+remains readable and older versions ignore it.
+
+Once authorized, this scan cannot be stopped from the unprivileged app. Stop and
+Quit are disabled while it runs; ordinary scans and updater relaunch wait. A 120-second
+CPU budget limits the command, but is not a wall-clock deadline: filesystem I/O may
+take longer. Cancelling authorization is supported. Force-quitting/crashing the app
+may leave the read-only system command running until it exits; do not rely on closing
+the popup to stop it. Full Disk Access, macOS protections, filesystem changes during
+traversal, or unexpected directory permissions can still prevent a measurement.
+
+This is a narrow one-shot operation, not a security boundary against an already
+compromised administrator or a modified app running as your user. Use trusted signed
+updates. No claim is made that the app is Apple-notarized or independently audited.
