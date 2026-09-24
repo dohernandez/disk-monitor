@@ -210,4 +210,15 @@ builds the same checked-out commit, and restores the keychain list and deletes i
 temporary keychain in a finally block. Credentials are removed from the build
 subprocess environment. The signed rebuild runs native, package and updater checks
 before packaging. A cancelled runner is disposable; it must never be a runtime Mac.
-Provisioning and secure backup of that stable identity are still outstanding.
+The dedicated identity was provisioned on September 24; the release flag remains off.
+Only the encrypted PKCS12 backup and public certificate remain locally; the password
+is stored in the release environment. GitHub secrets cannot be read back through
+the API; backup recovery requires a separately reviewed trusted workflow.
+
+After merging this disabled implementation, dispatch **Signed scanner validation**
+from `main`. It builds two candidates with the same identity on both architectures,
+checks signatures, fixtures, updater startup and increasing helper build numbers,
+and uploads test artifacts. It creates no release or tag and registers no scanner.
+The candidate builds are explicitly for supervised testing, not distribution.
+Do not install them over a used app without preserving the previous app and checking
+their metadata. Live integrated acceptance must pass before enabling releases.

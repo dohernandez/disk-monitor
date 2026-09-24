@@ -1,0 +1,53 @@
+name: Signed scanner validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main'
+    environment: release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build two candidates with the same isolated signing identity
+        env:
+          SCANNER_SIGNING_SHA1: ${{ vars.SCANNER_SIGNING_SHA1 }}
+          SCANNER_P12_BASE64: ${{ secrets.SCANNER_P12_BASE64 }}
+          SCANNER_P12_PASSWORD: ${{ secrets.SCANNER_P12_PASSWORD }}
+        run: |
+          for candidate in 1 2; do
+            export APP_BUILD="$candidate"
+            export BUILD_DIR="$RUNNER_TEMP/candidate-$candidate"
+            python3 scripts/build_signed_scanner.py
+          done
+      - name: Validate candidates without registration or installation
+        run: |
+          for candidate in 1 2; do
+            build_dir="$RUNNER_TEMP/candidate-$candidate"
+            python3 scripts/check_app.py "$build_dir/Disk Monitor.app"
+            python3 scripts/check_helper_fixtures.py "$build_dir"
+            python3 scripts/check_updater.py "$build_dir/Disk Monitor.app"
+            ditto -c -k --keepParent "$build_dir/Disk Monitor.app" "$RUNNER_TEMP/candidate-$candidate.zip"
+          done
+          python3 scripts/verify_scanner_pair.py "$RUNNER_TEMP/candidate-1/Disk Monitor.app" "$RUNNER_TEMP/candidate-2/Disk Monitor.app"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scanner-validation-${{ matrix.arch }}
+          path: ${{ runner.temp }}/candidate-*.zip
+          if-no-files-found: error
+          retention-days: 7
