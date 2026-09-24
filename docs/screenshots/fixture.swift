@@ -9,8 +9,10 @@ let application = PreviewApplication.shared
 application.setActivationPolicy(.prohibited)
 application.appearance = NSAppearance(named: .darkAqua)
 let preferences = UserDefaults(suiteName: "MonitorReadme." + UUID().uuidString)!
-let model = Model(home: "/Users/example", preferences: preferences)
+let model = Model(home: "/Users/example", preferences: preferences, spotlightPath: "/System/Volumes/Data/.Spotlight-V100")
 let now = Date()
+model.errors[model.spotlightPath] = "du: /System/Volumes/Data/.Spotlight-V100: Permission denied"
+model.protectedPaths.insert(model.spotlightPath)
 model.free = 342 * gib; model.capacity = 926 * gib
 model.status = "Showing saved folder measurements"; model.lastMeasuredAt = now
 let sizes: [(String, Int64)] = [

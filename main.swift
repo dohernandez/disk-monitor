@@ -234,7 +234,8 @@ final class Model: ObservableObject {
         Root(path: home + "/.rustup", title: "Rust toolchains"),
         Root(path: home + "/.foundry/anvil/tmp", title: "Anvil temporary files"),
         Root(path: home + "/.claude/projects", title: "Claude session history"),
-        Root(path: home + "/Library/Containers/com.docker.docker/Data/vms", title: "Docker VM storage")
+        Root(path: home + "/Library/Containers/com.docker.docker/Data/vms", title: "Docker VM storage"),
+        Root(path: spotlightPath, title: "Spotlight index")
     ].filter { FileManager.default.fileExists(atPath: $0.path) || readings[$0.path] != nil }
     }
     var caches: [Root] {
@@ -242,7 +243,9 @@ final class Model: ObservableObject {
         return defaultCacheOptions.filter { !excludedPaths.contains($0.path) && !projectRoots.map(\.path).contains($0.path) && !custom.contains($0.path) } + customCaches
     }
     let saveURL: URL
-    init(home: String = FileManager.default.homeDirectoryForCurrentUser.path, preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json")) {
+    let spotlightPath: String
+    init(home: String = FileManager.default.homeDirectoryForCurrentUser.path, preferences: UserDefaults = .standard, saveURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DiskMonitor/readings.json"), spotlightPath: String = "/System/Volumes/Data/.Spotlight-V100") {
+        self.spotlightPath = spotlightPath
         self.home = home
         self.saveURL = saveURL
         self.preferences = preferences
@@ -696,6 +699,7 @@ struct FolderSettings: View {
             ForEach(model.customCaches) { root in
                 HStack { Text(root.title); Spacer(); Button("Remove") {model.stopTracking(root.path)} }.help(root.path)
             }
+            Text("Spotlight’s index may require administrator access; Full Disk Access alone does not override its root ownership. Protected readings are not zero.").font(.caption).foregroundStyle(Palette.secondary)
             Button("Add cache folders…") {model.chooseRoots(asProject: false)}
         }.font(.system(size: 11))
     }
@@ -1062,7 +1066,7 @@ if CommandLine.arguments.contains("--self-test") {
     let portableHome = root.appendingPathComponent("portable-home")
     try fm.createDirectory(at: portableHome.appendingPathComponent("Library/Caches"), withIntermediateDirectories: true)
     let portableURL = root.appendingPathComponent("portable-state/readings.json")
-    let portable = Model(home: portableHome.path, saveURL: portableURL)
+    let portable = Model(home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(portable.projectRoots.isEmpty && portable.caches.count == 1)
     portable.stopTracking(portable.caches[0].path)
     precondition(portable.trackedRoots.isEmpty)
@@ -1076,21 +1080,21 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(portable.measurementLabel(missing.path) == "Not found")
     portable.readings[selected.path] = Reading(bytes: 30*gib, previous: 0, date: Date())
     portable.save()
-    let reopened = Model(home: portableHome.path, saveURL: portableURL)
+    let reopened = Model(home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(reopened.caches.isEmpty && reopened.project.path == selected.path && reopened.extras.count == 1)
     reopened.stopTracking(selected.path)
     precondition(reopened.projectRoots.isEmpty && reopened.readings[selected.path] != nil)
     precondition(!reopened.alerts.contains { $0.path == selected.path } && !reopened.largestFolders.contains { $0.path == selected.path })
     let oldSaved = Saved(readings: [portableHome.path + "/Documents/YeagerAI": complete], extras: [])
     try PrivateReadings.write(JSONEncoder().encode(oldSaved), to: portableURL)
-    let migrated = Model(home: portableHome.path, saveURL: portableURL)
+    let migrated = Model(home: portableHome.path, saveURL: portableURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(migrated.projectRoots.count == 1 && migrated.readings[migrated.project.path]?.bytes == complete.bytes)
     migrated.setProjects(selected.path)
     migrated.stopTracking(selected.path)
     precondition(migrated.projectRoots.isEmpty, "Stopping a replacement must not resurrect legacy Projects")
     for fixtureModel in [portable, reopened, migrated] { fixtureModel.timer?.invalidate(); fixtureModel.folderTimer?.invalidate() }
     let multiURL = root.appendingPathComponent("multi-state/readings.json")
-    let multi = Model(home: portableHome.path, saveURL: multiURL)
+    let multi = Model(home: portableHome.path, saveURL: multiURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     let first = portableHome.appendingPathComponent("first")
     let second = portableHome.appendingPathComponent("second")
     multi.addRoot(first, asProject: true); multi.addRoot(second, asProject: true)
@@ -1110,7 +1114,7 @@ if CommandLine.arguments.contains("--self-test") {
     multi.addRoot(customCache, asProject: false)
     multi.readings[customCache.path] = Reading(bytes: 20*gib, previous: nil, date: Date())
     multi.save()
-    let multiReloaded = Model(home: portableHome.path, saveURL: multiURL)
+    let multiReloaded = Model(home: portableHome.path, saveURL: multiURL, spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(multiReloaded.largestCount == 8 && multiReloaded.projectRoots.count == 2)
     precondition(multiReloaded.projectRoots.contains { $0.title == "Work repositories" })
     precondition(multiReloaded.caches.contains { $0.path == customCache.path })
@@ -1124,7 +1128,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(result.values[root.appendingPathComponent("folder with spaces").path] != nil)
     precondition(scanner.scan(root.appendingPathComponent("missing").path).error != nil)
     scanner.cancel(); precondition(scanner.scan(root.path).values.isEmpty)
-    let model = Model(saveURL: root.appendingPathComponent("state/readings.json"))
+    let model = Model(saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     model.toggle(root.path)
     precondition(model.loadingChildren.contains(root.path))
     model.toggle(root.path) // Collapse before the asynchronous directory read completes.
@@ -1177,7 +1181,7 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.scanState("/fixture/waiting") == .idle)
     let suite = "DiskMonitorTests." + UUID().uuidString
     let prefs = UserDefaults(suiteName: suite)!
-    let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"))
+    let configured = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)
     precondition(configured.configureSpaceThresholds(critical: 15, warning: 30))
@@ -1198,16 +1202,31 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(configured.timer!.timeInterval == 45 && configured.folderTimer!.timeInterval == 420)
     precondition(!configured.configureIntervals(diskSeconds: 0, folderMinutes: 0))
     precondition(configured.diskInterval == 45 && configured.folderInterval == 420)
-    let restored = Model(preferences: UserDefaults(suiteName: suite)!, saveURL: root.appendingPathComponent("state/readings.json"))
+    let restored = Model(preferences: UserDefaults(suiteName: suite)!, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(restored.diskInterval == 45 && restored.folderInterval == 420)
     precondition(restored.spaceThresholds.critical == 15 && restored.spaceThresholds.warning == 30)
     prefs.set(90, forKey: "criticalFreePercent"); prefs.set(20, forKey: "warningFreePercent")
-    let invalidThresholds = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"))
+    let invalidThresholds = Model(preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(invalidThresholds.spaceThresholds.critical == 10 && invalidThresholds.spaceThresholds.warning == 20)
     invalidThresholds.timer?.invalidate(); invalidThresholds.folderTimer?.invalidate()
     configured.timer?.invalidate(); configured.folderTimer?.invalidate()
     restored.timer?.invalidate(); restored.folderTimer?.invalidate()
     prefs.removePersistentDomain(forName: suite)
+    let spotlightFolder = root.appendingPathComponent("spotlight-fixture")
+    try fm.createDirectory(at: spotlightFolder, withIntermediateDirectories: true)
+    let spotlightState = root.appendingPathComponent("spotlight-state/readings.json")
+    let spotlightModel = Model(home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
+    precondition(spotlightModel.caches.contains { $0.path == spotlightFolder.path && $0.title == "Spotlight index" })
+    spotlightModel.readings[spotlightFolder.path] = Reading(bytes: 48*gib, date: Date())
+    precondition(spotlightModel.largestFolders.contains { $0.path == spotlightFolder.path })
+    spotlightModel.stopTracking(spotlightFolder.path)
+    precondition(!spotlightModel.caches.contains { $0.path == spotlightFolder.path })
+    let spotlightReloaded = Model(home: portableHome.path, preferences: prefs, saveURL: spotlightState, spotlightPath: spotlightFolder.path)
+    precondition(spotlightReloaded.defaultCacheOptions.contains { $0.path == spotlightFolder.path })
+    precondition(!spotlightReloaded.caches.contains { $0.path == spotlightFolder.path })
+    precondition(spotlightReloaded.readings[spotlightFolder.path]?.bytes == 48*gib)
+    spotlightModel.timer?.invalidate(); spotlightModel.folderTimer?.invalidate()
+    spotlightReloaded.timer?.invalidate(); spotlightReloaded.folderTimer?.invalidate()
     try fm.removeItem(at: root)
     print("PASS: scanner, folders, scan/queue states, alerts, configurable timers and preference persistence")
 } else {
