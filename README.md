@@ -77,7 +77,7 @@ busy automatic tick is skipped. Click outside or press Escape to dismiss the pop
 
 Default cache folders are included only when present on this Mac (or previously
 measured): Library caches, Go modules, Cargo, Rust toolchains, Anvil scratch, Claude
-history and Docker VM storage. Use **Settings → Tracked folders → Folders → Add folders…** for source code,
+history, Docker VM storage and the Nix store. Use **Settings → Tracked folders → Folders → Add folders…** for source code,
 workspaces or other directories. Use **Caches & tools** for cache folders. Right-click any tracked root to **Stop tracking**.
 Existing saved Projects measurements remain tracked when upgrading.
 See the [usage guide](docs/USAGE.md) for exact paths and scan behavior.

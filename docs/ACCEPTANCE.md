@@ -239,3 +239,14 @@ No separate repair, registration or verification buttons should appear.
   off during a pending check and upgrade from 1.7.3 with the old client registration.
 - Verify no separate access window opens, no duplicate scan starts, and denied access
   preserves saved values. These live checks are not established by fixture success.
+
+## Nix store measurement
+
+- A present or previously measured `/nix/store` appears as a normal cache row; an
+  absent, never-measured store has no placeholder. Existing manually tracked paths
+  must not produce duplicate rows or scans.
+- Fixture tests inject a temporary store and verify actual ordinary scanning, saved
+  bytes, ranking eligibility, exclusion persistence and re-enabling. No real Nix
+  store is scanned by these tests.
+- Manual UI acceptance: verify size/date, row refresh, expansion and the Settings
+  toggle. Sizes represent measured usage, not cleanup estimates.

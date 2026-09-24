@@ -65,11 +65,12 @@ Paths are relative to your home directory:
 | Rust toolchains | `~/.rustup` |
 | Anvil temporary files | `~/.foundry/anvil/tmp` |
 | Claude session history | `~/.claude/projects` |
+| Nix store | `/nix/store` |
 | Docker VM storage | `~/Library/Containers/com.docker.docker/Data/vms` |
 
 Use **Add folders…** to select roots or deep folders needing scheduled measurements.
-Nix is an informational row only; Nix reclamation and Docker-internal accounting
-are not implemented.
+Nix store is measured at `/nix/store` when present or previously measured. Nix
+reclaimable-space estimates and Docker-internal accounting are not implemented.
 
 ## Reading sizes correctly
 
@@ -186,9 +187,10 @@ Protected by macOS (or a partial lower bound), not zero, and do not raise the
 measurement-warning badge. The optional scanner integration is described below; ordinary scans never escalate. Previously complete readings remain saved on failure. A full
 index scan can be expensive because it may contain millions of files.
 
-The Nix store row remains informational: Separate accounting means the app does
-not measure it yet. APFS volume usage can be measured independently, but is not a
-Nix garbage-collection/reclaimable-space estimate.
+Nix store (`/nix/store`) is a detected cache row using the normal access, scan,
+refresh, expansion and saved-reading flow. It reports the directory’s measured
+allocated size, not reclaimable space or a sum of Nix dependency closures. Settings
+can stop or resume tracking without deleting readings. No Nix cleanup is performed.
 
 ## Shared folder access and measurement
 
