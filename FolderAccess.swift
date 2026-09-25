@@ -37,7 +37,6 @@ final class FolderAccess {
     }
     var uncertain: Bool { reader.uncertain }
     var busy: Bool { reader.busy }
-    func activity(for root: Root) -> String? { PrivilegedFolderReader.supports(root.path) ? reader.activity : nil }
     init(preferences: UserDefaults = .standard, reader: PrivilegedFolderReader? = nil,
          probe: @escaping (String) -> Check = FolderAccess.checkDirectory) {
         self.reader = reader ?? PrivilegedFolderReader(preferences: preferences)

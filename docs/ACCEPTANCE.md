@@ -276,6 +276,8 @@ No separate repair, registration or verification buttons should appear.
 
 - Refresh a folder: show checking-access activity immediately, then scanning activity
   when measurement starts. Queued siblings stay queued; failure/cancel clears activity.
+  Administrator-backed folders use the same label and spinner, with no additional
+  “Measuring folder…” or cooldown line beneath the row.
 - A preparation connection timeout says “Scan could not start” with the same reason
   in the alert and footer, rather than suggesting missing permission. The full footer
   is available on hover. Partial batches retain their failure/permission outcome.

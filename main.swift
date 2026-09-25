@@ -761,9 +761,6 @@ struct FolderRow: View {
                 Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(root.path, forType: .string) }
                 if model.trackedRoots.contains(where: { $0.path == root.path }) { Button("Stop tracking") { model.stopTracking(root.path) } }
             }
-            if let activity = model.folderAccess.activity(for: root) {
-                Text(activity).font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
-            }
             if model.expanded.contains(root.path) {
                 let children = model.children(root.path)
                 if children.isEmpty {

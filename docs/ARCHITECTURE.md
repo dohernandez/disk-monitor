@@ -307,7 +307,8 @@ visible on the next evaluation without a persistent derived-state cache.
 
 The shared access gate reports the root being prepared. Its row and ranking card
 show a checking-access spinner, with other batch roots queued; activity clears on
-failure or cancellation before measurement. Failures recorded during preparation
+failure or cancellation before measurement. All readers use this shared row state;
+there is no additional reader-specific activity line below a folder. Failures recorded during preparation
 use “Scan could not start” in Needs Attention. Footer outcomes distinguish launch
 failure, pending permission, completed scans with errors and successful completion;
 hover the footer to read its full diagnostic.
