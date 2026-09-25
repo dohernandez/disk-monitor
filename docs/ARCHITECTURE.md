@@ -400,3 +400,15 @@ fixtures accept the pinned executable and reject an incorrect hash, with an argu
 that exits before service initialization. These checks do not prove SMAppService's
 live upgrade registration; that acceptance remains required. Permission logic,
 certificate trust, IPC authentication and measurement deadlines are unchanged.
+
+## Full Disk Access restart guidance
+
+The existing access card and Info text explain macOS's Quit & Reopen step. Returning
+from a Full Disk Access visit still rechecks access through the shared gate. If a
+pending folder remains denied or its reader fails to connect, its existing message
+includes conditional advice to quit/reopen Disk Monitor. The underlying error is
+retained; visiting Settings is not treated as proof that permission was granted or
+that restart is certainly the cause. Background-approval visits alone do not add
+this advice. It clears when access succeeds, tracking is cancelled or the app exits.
+No restart flag is persisted and no automatic restart or permission reset occurs.
+Startup retains its normal checks of all enabled folders before scanning.

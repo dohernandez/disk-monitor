@@ -359,3 +359,18 @@ wrong-hash case. The test reports kernel rejection as SKIP on that exact conditi
 never as a pass. Matching launch and missing/stale package checks still run. On a
 SIP-enabled Mac, wrong-hash execution always fails the test; it passed locally with
 the installed build 59 scanner. CI cannot replace that security acceptance.
+
+## Applying Full Disk Access changes
+
+- Start with background approval required, approve it, then review Full Disk Access.
+  If a return still yields a connection timeout, retain that error and show the
+  quit/reopen guidance in the existing Needs Attention entry and footer detail.
+- The advice also applies to ordinary denied folders. Opening FDA for Library
+  caches supplies context for other pending folders; background approval alone
+  must not label failures as an FDA/restart problem.
+- A Settings visit must not imply granted access, start a scan or relaunch the app.
+  Existing successful checks resume once and clear the advice. Cancelled tracking
+  clears it; a fresh app instance checks access normally without stale advice.
+- Fixtures cover these transitions. Manual UI acceptance: check text wrapping,
+  macOS Quit & Reopen, the fallback power-button quit/reopen, and subsequent scan.
+  Permission order alone has not been established as the cause of the live failure.
