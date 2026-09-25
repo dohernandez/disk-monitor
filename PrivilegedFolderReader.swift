@@ -247,12 +247,6 @@ final class PrivilegedFolderReader {
         registrationDenied = false // One explicit Settings return may retry registration.
         setEnabled(true, completion: completion)
     }
-    var activity: String? {
-        if uncertain { return "Scan completion unconfirmed · restart your Mac" }
-        if busy { return cancelling ? "Stopping measurement…" : "Measuring folder…" }
-        let remaining = max(0, Int(ceil(retryAt - now)))
-        return remaining > 0 ? "Recent measurement · next scan in \(remaining)s" : nil
-    }
     /// Caller owns the app's global scan slot. This never opens setup or requests approval.
     func measure(completion: @escaping (Measurement) -> Void) {
         guard enabled, ready, !busy, !uncertain, packageValid, registration == 1, failure == nil, !needsAccess else {
