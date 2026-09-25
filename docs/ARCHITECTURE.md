@@ -302,3 +302,19 @@ AlertPanel and LargestFolders each compute their displayed list once per body,
 including badge styling and chart scale; child sorting also reuses one readings
 snapshot. These are local snapshots, so preference and measurement changes remain
 visible on the next evaluation without a persistent derived-state cache.
+
+## Scan preparation and measurement history
+
+The shared access gate reports the root being prepared. Its row and ranking card
+show a checking-access spinner, with other batch roots queued; activity clears on
+failure or cancellation before measurement. Failures recorded during preparation
+use “Scan could not start” in Needs Attention. Footer outcomes distinguish launch
+failure, pending permission, completed scans with errors and successful completion;
+hover the footer to read its full diagnostic.
+
+Administrator readings compare consecutive complete measurements from the same
+method. A repeated cached timestamp keeps the previous comparison rather than
+manufacturing “No change”; failures keep the complete bytes/date/previous value.
+Switching between ordinary and administrator measurements starts a new baseline.
+Existing Reading fields persist this history in readings.json, with no schema or
+storage-location change. Restarting/upgrading keeps that file and preferences.

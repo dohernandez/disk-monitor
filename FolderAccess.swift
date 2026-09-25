@@ -15,6 +15,7 @@ final class FolderAccess {
     private let probe: (String) -> Check
     private var pending: [String: Root] = [:]
     private var revisions: [String: Int] = [:]
+    private(set) var failedBeforeScan: Set<String> = []
     private(set) var requirements: [String: Requirement] = [:]
     private var waitingForSettings = false
     private var activationObserver: NSObjectProtocol?
@@ -30,7 +31,7 @@ final class FolderAccess {
         self.reader.onReady = { [weak self] in
             guard let self else { return }
             let ready = self.pending.values.filter { PrivilegedFolderReader.supports($0.path) }
-            for root in ready { self.pending.removeValue(forKey: root.path); self.requirements.removeValue(forKey: root.path) }
+            for root in ready { self.pending.removeValue(forKey: root.path); self.requirements.removeValue(forKey: root.path); self.failedBeforeScan.remove(root.path) }
             if !ready.isEmpty { self.onGranted?(Array(ready)) }
             self.onChange?()
         }
@@ -51,10 +52,10 @@ final class FolderAccess {
             self.prepare(checkingAccess ? roots : roots.filter { PrivilegedFolderReader.supports($0.path) }, requestIfNeeded: checkingAccess) { _ in completion() }
         }
     }
-    func cancel(_ path: String) { revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }
+    func cancel(_ path: String) { failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }
     func cancelPending() { for path in Array(revisions.keys) { cancel(path) }; pending.removeAll() }
     func cancelMeasurement() { reader.cancel() }
-    func prepare(_ roots: [Root], requestIfNeeded: Bool, completion: @escaping ([Root]) -> Void) {
+    func prepare(_ roots: [Root], requestIfNeeded: Bool, onChecking: @escaping (Root) -> Void = { _ in }, completion: @escaping ([Root]) -> Void) {
         var allowed: [Root] = []
         let tokens = Dictionary(roots.map { root in
             if revisions[root.path] == nil { revisions[root.path] = 0 }
@@ -64,8 +65,11 @@ final class FolderAccess {
             guard index < roots.count else { self.onChange?(); completion(allowed); return }
             let root = roots[index]
             guard self.revisions[root.path] == tokens[root.path] else { next(index + 1); return }
+            onChecking(root)
             func finish(_ requirement: Requirement?) {
                 guard self.revisions[root.path] == tokens[root.path] else { next(index + 1); return }
+                if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
+                else { self.failedBeforeScan.remove(root.path) }
                 if let requirement { self.requirements[root.path] = requirement; self.pending[root.path] = root }
                 else { self.requirements.removeValue(forKey: root.path); self.pending.removeValue(forKey: root.path); allowed.append(root) }
                 next(index + 1)
@@ -101,6 +105,7 @@ final class FolderAccess {
     /// Called with the app's single scan slot held. No UI, shell or arbitrary
     /// privileged path is exposed to the model or its scan loop.
     func measure(_ root: Root, scanner: Scanner, completion: @escaping (Result) -> Void) {
+        failedBeforeScan.remove(root.path)
         if PrivilegedFolderReader.supports(root.path) {
             reader.measure { value in
                 if value.error != nil, value.error != "Measurement cancelled", let requirement = self.privilegedRequirement() {
