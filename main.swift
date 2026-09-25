@@ -1542,6 +1542,16 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(gate.requirements[indexPath] == nil && resumedRoots.map(\.path) == [indexPath])
     gate.returnedFromSettings()
     precondition(resumedRoots.count == 1 && replies.isEmpty)
+    // A real check failure retains its cause and is a start failure, not a scan.
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 2))
+    gate.prepare([protectedRoot], requestIfNeeded: false) { _ in }
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    gate.willOpenSettings(); gate.returnedFromSettings()
+    replies.removeFirst()(BridgeMessage(event: "launchFailed", error: "Scanner connection timed out"))
+    precondition(gate.requirements[indexPath] == .failed("Scanner connection timed out"))
+    precondition(gate.failedBeforeScan.contains(indexPath) && resumedRoots.count == 1)
     // A new uncached measurement is cancelled through the same folder owner.
     reader.setEnabled(false)
     replies.removeFirst()(BridgeMessage(event: "status", status: 1))
