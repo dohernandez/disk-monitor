@@ -375,3 +375,12 @@ The existing version/path registration renewal migrates the previous bridge-owne
 registration on upgrade. Approval checks, permission actions, scan scheduling,
 10-second connection deadline and 15-minute measurement budget remain unchanged.
 Live launch after the signed upgrade must still be recorded separately from fixtures.
+
+
+A background registration rejected with SMAppServiceErrorDomain/code 1 and status
+notRegistered is also pending approval. Keep the actual service status intact, but
+surface the existing background-approval action during startup. Automatic checks
+only poll while waiting; returning from Settings may retry registration once, then
+validate access and resume the pending folder once. Other domains/codes remain
+failures. This handles a disabled background item after upgrade renewal without
+adding permission UI or changing ordinary folder access checks.

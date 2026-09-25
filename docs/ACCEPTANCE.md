@@ -327,3 +327,16 @@ No separate repair, registration or verification buttons should appear.
   from DiskMonitor. Verify launchd resolves the bundled Scanner, the handshake succeeds,
   and a requested scan completes. Do not substitute a longer connection timeout or
   reset global background-task/permission state. Live acceptance is not a build result.
+
+
+## Startup registration denied before bootstrap
+
+- With a recent saved reading, inject status notRegistered and registration error
+  SMAppServiceErrorDomain/1. Startup opens the existing popup and shows background
+  approval, without reporting a failed scan or starting measurement.
+- Repeated automatic preparation does not register again. Returning from Settings
+  can complete registration, validate access and resume the pending folder once.
+- The same error number from another domain remains a failure. The raw registration
+  status is preserved. Fixtures must not request actual system permissions.
+- Live acceptance: upgrade/restart with background execution disabled and verify the
+  existing approval action appears; enable it and return. Test FDA independently.

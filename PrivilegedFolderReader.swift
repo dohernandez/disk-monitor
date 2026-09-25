@@ -13,6 +13,8 @@ final class PrivilegedFolderReader {
     var needsAccess = false
     var packageValid = false
     var registration: Int = 0
+    private var registrationDenied = false
+    var needsBackgroundApproval: Bool { registration == 2 || registrationDenied }
     private(set) var enabled = false
     private(set) var ready = false
     private(set) var reconciling = false
@@ -61,6 +63,7 @@ final class PrivilegedFolderReader {
             self.checkingStatus = false
             self.packageValid = reply.event != "packageFailed"
             self.registration = reply.status ?? 0
+            if self.registration == 1 { self.registrationDenied = false }
             let callbacks = self.availabilityCallbacks
             self.availabilityCallbacks.removeAll()
             callbacks.forEach { $0() }
@@ -122,6 +125,7 @@ final class PrivilegedFolderReader {
     /// FolderAccess supplies whether the current tracked roots need this capability.
     func setEnabled(_ value: Bool, completion: (() -> Void)? = nil) {
         enabled = value; ready = false; failure = nil; lifecycleRevision += 1
+        if !value { registrationDenied = false }
         if let completion { lifecycleCallbacks.append(completion) }
         reconcile()
     }
@@ -144,7 +148,7 @@ final class PrivilegedFolderReader {
                 else { self.removeRegistration() }
             } else if (self.registration == 1 || self.registration == 2) && (!self.preferences.bool(forKey: "scannerClientIdentityV2") || self.preferences.string(forKey: "scannerRegisteredAppBuild") != self.registrationIdentity) {
                 self.restartRegistration()
-            } else if self.registration == 2 {
+            } else if self.needsBackgroundApproval {
                 self.startTimer(); self.finishReconciliation()
             } else if self.registration == 1 {
                 if self.restartAfterPermission { self.restartRegistration() }
@@ -157,9 +161,13 @@ final class PrivilegedFolderReader {
     private func registerForCurrentIntent() {
         run("register") { reply in
             self.registration = reply.status ?? 0
+            // A disabled background item can report notRegistered even after the
+            // registration request returns Apple's explicit approval-required error.
+            self.registrationDenied = self.enabled && self.registration == 0
+                && reply.errorDomain == SMAppServiceErrorDomain && reply.errorCode == 1
             if self.activeRevision != self.lifecycleRevision {
                 self.finishReconciliation()
-            } else if self.registration == 2 {
+            } else if self.needsBackgroundApproval {
                 self.preferences.set(true, forKey: "scannerClientIdentityV2")
                 self.preferences.set(self.registrationIdentity, forKey: "scannerRegisteredAppBuild")
                 self.failure = nil; self.startTimer(); self.finishReconciliation()
@@ -236,6 +244,7 @@ final class PrivilegedFolderReader {
         // Join that check rather than exposing its temporary not-ready state.
         if reconciling { lifecycleCallbacks.append(completion); return }
         restartAfterPermission = needsAccess
+        registrationDenied = false // One explicit Settings return may retry registration.
         setEnabled(true, completion: completion)
     }
     var activity: String? {
@@ -312,7 +321,7 @@ final class PrivilegedFolderReader {
                 // Includes bridge startup; no claim that an unobserved request stopped.
                 uncertain = true; onChange?()
             }
-        } else if registration == 2 {
+        } else if needsBackgroundApproval {
             if enabled && !reconciling {
                 refreshAvailability {
                     if self.enabled && self.registration == 1 { self.setEnabled(true) }
