@@ -256,7 +256,6 @@ final class Model: ObservableObject {
         return (projectPath != nil || readings[project.path] != nil) && !excludedPaths.contains(project.path) ? [project] : []
     }
     var trackedRoots: [Root] { projectRoots + caches + extras }
-    func isTracked(_ path: String) -> Bool { trackedRoots.contains { path == $0.path || path.hasPrefix($0.path + "/") } }
 
     var defaultCacheOptions: [Root] { [
         Root(path: home + "/Library/Caches", title: "Library caches"),
@@ -272,7 +271,10 @@ final class Model: ObservableObject {
     }
     var caches: [Root] {
         let custom = Set(customCaches.map(\.path))
-        return defaultCacheOptions.filter { !excludedPaths.contains($0.path) && !projectRoots.map(\.path).contains($0.path) && !custom.contains($0.path) && !extras.map(\.path).contains($0.path) } + customCaches
+        let projects = Set(projectRoots.map(\.path))
+        let extraPaths = Set(extras.map(\.path))
+        let excluded = excludedPaths
+        return defaultCacheOptions.filter { !excluded.contains($0.path) && !projects.contains($0.path) && !custom.contains($0.path) && !extraPaths.contains($0.path) } + customCaches
     }
     let saveURL: URL
     let spotlightPath: String
@@ -411,7 +413,14 @@ final class Model: ObservableObject {
                 result.append(DiskAlert(id: "scan:" + root.path, critical: false, title: "Incomplete scan · " + root.title, detail: error ?? readings[root.path]?.scanError ?? "Some contents could not be measured. Rescan the folder for specific error details.", path: root.path, measurementIssue: true))
             }
         }
-        let growth = readings.filter { isTracked($0.key) && $0.value.missing != true && $0.value.incomplete != true && $0.value.previous != nil && $0.value.bytes - $0.value.previous! >= 10 * gib }.sorted {
+        // Resolve roots once, not once per saved reading (which also probed the filesystem).
+        let rootPaths = roots.map(\.path)
+        let snapshot = readings
+        let growth = snapshot.filter { path, reading in
+            guard reading.missing != true, reading.incomplete != true,
+                  let previous = reading.previous, reading.bytes - previous >= 10 * gib else { return false }
+            return rootPaths.contains { path == $0 || path.hasPrefix($0 + "/") }
+        }.sorted {
             ($0.value.bytes - $0.value.previous!) > ($1.value.bytes - $1.value.previous!)
         }
         var selected: [String] = []
@@ -423,9 +432,10 @@ final class Model: ObservableObject {
         return result
     }
     func children(_ path: String) -> [Root] {
-        (childCache[path] ?? []).sorted {
-            let left = readings[$0.path]?.bytes ?? -1
-            let right = readings[$1.path]?.bytes ?? -1
+        let snapshot = readings
+        return (childCache[path] ?? []).sorted {
+            let left = snapshot[$0.path]?.bytes ?? -1
+            let right = snapshot[$1.path]?.bytes ?? -1
             return left == right ? $0.title.localizedStandardCompare($1.title) == .orderedAscending : left > right
         }
     }
@@ -453,17 +463,22 @@ final class Model: ObservableObject {
         }
     }
     var largestFolders: [Root] {
-        let projectPaths = projectRoots.map(\.path)
+        let projects = projectRoots
+        let cacheRoots = caches
+        let extraRoots = extras
+        let rootPaths = (projects + cacheRoots + extraRoots).map(\.path)
+        let snapshot = readings
+        let projectPaths = projects.map(\.path)
         let library = home + "/Library/Caches"
-        var candidates = Set(readings.keys.filter {
+        var candidates = Set(snapshot.keys.filter {
             let parent = URL(fileURLWithPath: $0).deletingLastPathComponent().path
             let candidate = $0
             return projectPaths.contains { (parent == $0 && candidate != $0 + "/worktree") || parent == $0 + "/worktree" } || parent == library
         })
-        for root in caches where root.path != library { candidates.insert(root.path) }
-        for root in extras { candidates.insert(root.path) }
-        let sorted = candidates.filter { readings[$0] != nil && readings[$0]?.missing != true && isTracked($0) }.sorted {
-            let a = readings[$0]!.bytes, b = readings[$1]!.bytes
+        for root in cacheRoots where root.path != library { candidates.insert(root.path) }
+        for root in extraRoots { candidates.insert(root.path) }
+        let sorted = candidates.filter { path in snapshot[path] != nil && snapshot[path]?.missing != true && rootPaths.contains { path == $0 || path.hasPrefix($0 + "/") } }.sorted {
+            let a = snapshot[$0]!.bytes, b = snapshot[$1]!.bytes
             return a == b ? $0 < $1 : a > b
         }
         var selected: [String] = []
@@ -473,7 +488,7 @@ final class Model: ObservableObject {
             if selected.count == largestCount { break }
         }
         return selected.map { path in
-            let title = caches.first(where: { $0.path == path })?.title ?? URL(fileURLWithPath: path).lastPathComponent
+            let title = cacheRoots.first(where: { $0.path == path })?.title ?? URL(fileURLWithPath: path).lastPathComponent
             return Root(path: path, title: title)
         }
     }
@@ -735,16 +750,18 @@ struct FolderRow: View {
 struct LargestFolders: View {
     @ObservedObject var model: Model
     var body: some View {
+        let folders = model.largestFolders
+        let largestBytes = folders.first.flatMap { model.readings[$0.path]?.bytes } ?? 1
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Label("\(model.largestCount) LARGEST FOLDERS", systemImage: "chart.bar.xaxis").font(.system(size: 10, weight: .semibold))
                 Spacer()
                 Text("From last scans").font(.system(size: 10)).foregroundStyle(Palette.secondary)
             }
-            if model.largestFolders.isEmpty {
+            if folders.isEmpty {
                 Text("Scanning folders to find the largest…").font(.caption).foregroundStyle(Palette.secondary).padding(.vertical, 12)
             }
-            ForEach(Array(model.largestFolders.enumerated()), id: \.element.path) { index, root in
+            ForEach(Array(folders.enumerated()), id: \.element.path) { index, root in
                 if let reading = model.readings[root.path] {
                     Button { model.reveal(root.path) } label: {
                         HStack(alignment: .top, spacing: 10) {
@@ -763,7 +780,7 @@ struct LargestFolders: View {
                                     else if let old = reading.previous, reading.bytes != old { Text("\(reading.bytes > old ? "+" : "−")\(sizeText(abs(reading.bytes - old)))").foregroundStyle(reading.bytes - old >= 10 * gib ? Palette.warning : Palette.secondary) }
                                 }.font(.system(size: 9)).foregroundStyle(Palette.secondary)
                                 GeometryReader { g in
-                                    Capsule().fill(Palette.accent.opacity(0.40)).frame(width: max(2, g.size.width * Double(reading.bytes) / Double(max(1, model.readings[model.largestFolders.first!.path]!.bytes))))
+                                    Capsule().fill(Palette.accent.opacity(0.40)).frame(width: max(2, g.size.width * Double(reading.bytes) / Double(max(1, largestBytes))))
                                 }.frame(height: 3)
                             }
                         }.padding(9).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
@@ -776,10 +793,12 @@ struct LargestFolders: View {
 struct AlertPanel: View {
     @ObservedObject var model: Model
     var body: some View {
-        if !model.alerts.isEmpty {
+        let alerts = model.alerts
+        let level = diskBadgeLevel(alerts)
+        if !alerts.isEmpty {
             VStack(alignment: .leading, spacing: 9) {
-                Label("NEEDS ATTENTION", systemImage: diskBadgeLevel(model.alerts)==1 ? "questionmark.circle.fill" : "exclamationmark.circle.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(diskBadgeLevel(model.alerts)==3 ? Palette.critical : diskBadgeLevel(model.alerts)==2 ? Palette.warning : Palette.uncertainty)
-                ForEach(model.alerts) { alert in
+                Label("NEEDS ATTENTION", systemImage: level==1 ? "questionmark.circle.fill" : "exclamationmark.circle.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(level==3 ? Palette.critical : level==2 ? Palette.warning : Palette.uncertainty)
+                ForEach(alerts) { alert in
                     Button {
                         if let path = alert.path { model.reveal(path) }
                     } label: {
@@ -1566,6 +1585,24 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(nixReloaded.trackedRoots.filter { $0.path == nixFixture.path }.count == 1)
     nixModel.timer?.invalidate(); nixModel.folderTimer?.invalidate()
     nixReloaded.timer?.invalidate(); nixReloaded.folderTimer?.invalidate()
+    let performanceModel = Model(nixStorePath: root.appendingPathComponent("missing-nix-perf").path, home: root.path, preferences: prefs, saveURL: root.appendingPathComponent("performance-state.json"), spotlightPath: root.appendingPathComponent("missing-index-perf").path)
+    performanceModel.timer?.invalidate(); performanceModel.folderTimer?.invalidate()
+    let performanceRoot = root.appendingPathComponent("performance-projects").path
+    performanceModel.projects = [Root(path: performanceRoot, title: "Performance fixture")]
+    performanceModel.capacity = 1000 * gib; performanceModel.free = 400 * gib
+    var performanceReadings: [String: Reading] = [:]
+    for index in 0..<2000 {
+        let path = performanceRoot + "/repo-" + String(index)
+        performanceReadings[path] = Reading(bytes: Int64(index + 1) * gib, previous: Int64(index) * gib, date: Date(timeIntervalSince1970: 100))
+    }
+    performanceModel.readings = performanceReadings
+    let renderStart = Date()
+    for _ in 0..<3 {
+        precondition(performanceModel.alerts.isEmpty)
+        let largest = performanceModel.largestFolders
+        precondition(largest.count == 5 && largest.first?.path == performanceRoot + "/repo-1999")
+    }
+    print("PERFORMANCE: 2000 saved readings, 3 alert/ranking evaluations: \(Date().timeIntervalSince(renderStart)) seconds")
     try fm.removeItem(at: root)
     print("PASS: scanner, folders, scan/queue states, alerts, configurable timers and preference persistence")
 } else {

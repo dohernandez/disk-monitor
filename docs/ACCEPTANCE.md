@@ -259,3 +259,13 @@ No separate repair, registration or verification buttons should appear.
 - Recovery clears the access failure without erasing an independent scan error.
 - Pending permission approval alone does not create a yellow badge. Existing
   Settings actions remain available. Check row layout manually after installation.
+
+## Large saved histories
+
+- The self-test evaluates alerts and largest-folder ranking three times over 2,000
+  temporary saved readings, checks the results and prints elapsed time for comparison.
+  Existing tests cover tracking changes, overlap suppression, deleted paths, warning
+  priority and settings persistence. No monitored folders are scanned for this test.
+- With a large real history, manually check opening the menu popup and scrolling,
+  then expand a folder and navigate from a ranked entry. Fixture timing does not
+  establish live rendering latency or mouse behavior.
