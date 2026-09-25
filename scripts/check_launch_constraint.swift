@@ -19,7 +19,8 @@ for matches in [true, false] {
         try process.run()
         process.waitUntilExit()
         precondition(matches ? (process.terminationReason == .exit && process.terminationStatus == 1)
-                             : process.terminationReason == .uncaughtSignal)
+                             : process.terminationReason == .uncaughtSignal,
+                     "Constraint matches=\(matches), termination=\(process.terminationReason.rawValue), status=\(process.terminationStatus)")
     } catch {
         precondition(!matches, "Matching scanner constraint rejected: \(error)")
     }

@@ -51,6 +51,7 @@ print('PASS: internal bridge cannot register or manage the app service')
 
 # Exercise launch constraints with the kernel, without registering a service.
 # The invalid argument exits at the helper's first guard, including when run as root.
+subprocess.run(['/usr/bin/csrutil', 'status'], check=True)
 from scanner_constraint import SERVICE, constraint, check as check_constraint
 launch_check = build / 'launch-constraint-check'
 compiler = base.copy()
