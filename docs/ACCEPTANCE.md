@@ -298,3 +298,19 @@ No separate repair, registration or verification buttons should appear.
 - Fixtures cover identity change/pending approval, unchanged identity, timeout behavior,
   startup with a recent saved reading, permission visibility and cancellation cleanup.
   Live upgrade/reapproval and launchd resolution still require runtime acceptance.
+
+
+## Host identity and Settings-return race
+
+- Scanner-enabled releases validate the pinned certificate on the host, bridge and
+  reader. An ad-hoc or incorrectly signed host must fail package validation.
+- Packaging preserves signed bundle bytes; different version/build requests fail
+  before staging. Ordinary unsigned PR installers may still stamp and ad-hoc sign.
+- Pair validation checks that the host's designated requirement survives an upgrade,
+  as well as both internal executable identities.
+- Fixture: approval polling begins a check before Settings returns focus. The
+  permission remains pending until completion, no unavailable failure is published,
+  no second check is started, and success resumes exactly one measurement.
+- Live acceptance after upgrading: approved registration must launch its bundled
+  executable and complete access validation/measurement. Test returning during the
+  check and confirm no transient unavailable alert. Package tests do not prove this.

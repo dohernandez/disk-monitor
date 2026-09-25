@@ -341,3 +341,20 @@ registration once before access validation, respecting owned-scan cancellation a
 unknown-completion guards. This covers signed release upgrades and moved apps;
 unchanged local rebuild version/path does not establish a changed identity. A
 connection timeout alone never triggers an unregister/register retry loop.
+
+
+## Scanner host signing and permission-return ordering
+
+The single Disk Monitor.app and its two internal scanner executables use the same
+stable release certificate. BundlePolicy validates all three identities before IPC.
+Release packaging preserves the signed host and final metadata; it cannot replace
+the host signature with an ad-hoc signature or silently restamp a signed release.
+This addresses the unstable host identity used for SMAppService bundle resolution.
+The certificate is self-signed, not Apple Developer ID or notarization; live launch
+and upgrade acceptance remain separate from package validation.
+
+When approval polling is already checking access, returning from System Settings
+joins that reconciliation. It does not report the temporary not-ready state as
+“Folder reader is unavailable”. A successful check resumes the pending folder once;
+a failed check retains its actual error. Startup checks, native prompts and the
+existing Needs Attention permission actions are unchanged.

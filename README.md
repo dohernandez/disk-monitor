@@ -32,8 +32,8 @@ caches without leaving your current app.
 - **Know when to look.** Menu bar badges distinguish low space, large growth, and incomplete measurements.
 
 Built with SwiftUI and AppKit. **Version 1.0.0** is the first stable version. CI produces drag-to-Applications DMGs
-for macOS 15+, with separate Apple Silicon and Intel downloads. Builds are ad-hoc
-signed; Apple notarization and launch-at-login are not configured. Signed in-app updates are available from Settings.
+for macOS 15+, with separate Apple Silicon and Intel downloads. Releases use a dedicated self-signed certificate; source builds without the signer are ad-hoc
+signed. Apple notarization and launch-at-login are not configured. Signed in-app updates are available from Settings.
 
 ## Installation
 

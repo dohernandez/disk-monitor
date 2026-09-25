@@ -14,7 +14,8 @@ codesign --verify --deep --strict "build/Disk Monitor.app"
 ```
 
 Keep the complete build log when diagnosing failure. A successful build creates
-`build/Disk Monitor.app`, writes Info.plist, and ad-hoc signs the bundle. The script
+`build/Disk Monitor.app`, writes Info.plist, and signs the bundle (ad-hoc for ordinary source builds; the
+dedicated certificate for scanner-enabled releases). The script
 changes into its own directory, so it works when called from elsewhere. It compiles
 Swift app and updater files with Cocoa, SwiftUI and Sparkle, optimization enabled and Swift 5 language mode.
 Sparkle is downloaded at build time using a pinned checksum and embedded in the app.

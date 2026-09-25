@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import platform
+import plistlib
 import subprocess
 import tempfile
 from pathlib import Path
@@ -12,8 +13,14 @@ from check_app import check
 
 def package(app, version, build, output, require_scanner=False):
     app, output = Path(app).resolve(), Path(output).resolve()
-    if (app / 'Contents/MacOS/Scanner').exists() or (app / 'Contents/MacOS/ScannerBridge').exists() or (app / 'Contents/Library/Scanner').exists():
-        check(app, require_scanner=True) # Check pinned internal signatures before staging or re-signing the outer app.
+    has_scanner = any((app / path).exists() for path in ('Contents/MacOS/Scanner', 'Contents/MacOS/ScannerBridge', 'Contents/Library/Scanner'))
+    if has_scanner:
+        check(app, require_scanner=True)
+        info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+        if (info['CFBundleShortVersionString'], info['CFBundleVersion']) != (version, build):
+            raise ValueError('Scanner releases must be built with the final version and build before signing')
+    elif require_scanner:
+        raise ValueError('Release requires the signed scanner; refusing a scanner-less app')
     output.mkdir(parents=True, exist_ok=True)
     architecture = platform.machine()
     if architecture not in ('arm64', 'x86_64'):
@@ -28,8 +35,11 @@ def package(app, version, build, output, require_scanner=False):
         stage.mkdir()
         staged_app = stage / (APP_NAME + '.app')
         subprocess.run(['ditto', str(app), str(staged_app)], check=True)
-        write_info(staged_app, version, build)
-        subprocess.run(['codesign', '--force', '--sign', '-', str(staged_app)], check=True)
+        if not has_scanner:
+            write_info(staged_app, version, build)
+            subprocess.run(['codesign', '--force', '--sign', '-', str(staged_app)], check=True)
+        # Signed release metadata is already final. Preserve the host signature too:
+        # SMAppService resolves BundleProgram through the containing app's identity.
         check(staged_app, require_scanner=require_scanner)
         (stage / 'Applications').symlink_to('/Applications', target_is_directory=True)
         (stage / 'Install.txt').write_text(
@@ -37,8 +47,9 @@ def package(app, version, build, output, require_scanner=False):
             'Requires macOS 15 or later. Choose arm64 for Apple Silicon, x86_64 for Intel.\n'
             'Quit any existing copy, then drag the app into Applications and launch it there.\n'
             'The app appears in the menu bar. Command-drag its icon to choose a position.\n'
-            'Settings and saved measurements stay in your user account when replacing the app.\n\n'
-            'This build is ad-hoc signed, not Apple Developer ID-signed or notarized.\n'
+            'Settings and saved measurements stay in your user account when replacing the app.\n\n' +
+            ('This build uses a dedicated self-signed certificate.\n' if has_scanner else 'This build is ad-hoc signed.\n') +
+            'It is not Apple Developer ID-signed or notarized.\n'
             'macOS may block a downloaded copy. See the repository installation guide.\n'
             'There is no automatic login item, cleanup, or agent configuration change.\n')
         subprocess.run(['hdiutil', 'create', '-volname', APP_NAME + ' ' + version, '-srcfolder', str(stage), '-format', 'UDZO', str(image)], check=True)
