@@ -535,6 +535,7 @@ final class Model: ObservableObject {
         revealRequest += 1
     }
     func toggle(_ path: String) {
+        revealPath = nil // Manual tree navigation supersedes an earlier reveal.
         if expanded.contains(path) { expanded.remove(path) }
         else { expanded.insert(path); loadChildren(path) }
     }
@@ -755,6 +756,7 @@ struct FolderRow: View {
             .font(.system(size: 12)).padding(.leading, CGFloat(depth) * 14 + 8).padding(.trailing, 8)
             .background(model.revealPath == root.path ? Palette.accent.opacity(0.12) : depth == 0 ? Palette.surface : Color.clear)
             .contentShape(Rectangle())
+            .id(root.path) // Navigation targets the header, not its expanded descendants.
             .contextMenu {
                 Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: root.path) }
                 Button("Scan this folder") { model.refreshFolder(root) }.disabled(model.scanning)
@@ -769,7 +771,7 @@ struct FolderRow: View {
                 }
                 ForEach(children) { child in FolderRow(model: model, root: child, depth: depth + 1) }
             }
-        }.id(root.path)
+        }
     }
 }
 struct LargestFolders: View {
@@ -1061,10 +1063,16 @@ struct Dashboard: View {
                 }.padding(14)
             }
             .onChange(of: model.revealRequest) { _, _ in
-                if let path = model.revealPath { DispatchQueue.main.async { withAnimation { proxy.scrollTo(path, anchor: .top) } } }
+                if let path = model.revealPath { DispatchQueue.main.async {
+                    guard model.revealPath == path else { return }
+                    withAnimation { proxy.scrollTo(path, anchor: .top) }
+                } }
             }
             .onChange(of: model.loadingChildren) { _, loading in
-                if loading.isEmpty, let path = model.revealPath { DispatchQueue.main.async { withAnimation { proxy.scrollTo(path, anchor: .top) } } }
+                if loading.isEmpty, let path = model.revealPath { DispatchQueue.main.async {
+                    guard model.revealPath == path else { return }
+                    withAnimation { proxy.scrollTo(path, anchor: .top) }
+                } }
             }
             }
             }
@@ -1372,12 +1380,16 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(scanner.scan(root.appendingPathComponent("missing").path).error != nil)
     scanner.cancel(); precondition(scanner.scan(root.path).values.isEmpty)
     let model = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
+    model.revealPath = root.appendingPathComponent("folder with spaces").path
     model.toggle(root.path)
+    precondition(model.revealPath == nil, "Manual expansion cancels the previous reveal before children load")
     precondition(model.loadingChildren.contains(root.path))
+    model.revealPath = root.path
     model.toggle(root.path) // Collapse before the asynchronous directory read completes.
     let deadline = Date().addingTimeInterval(5)
     while model.loadingChildren.contains(root.path) && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
     precondition(!model.loadingChildren.contains(root.path))
+    precondition(model.revealPath == nil, "A completed directory load must not revive navigation cancelled by collapse")
     precondition(!model.expanded.contains(root.path), "Directory completion must not reopen a collapsed row")
     precondition(model.children(root.path).contains { $0.title == "folder with spaces" })
     model.toggle(root.path)

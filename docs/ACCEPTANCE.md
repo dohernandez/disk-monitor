@@ -32,6 +32,10 @@ check below. For a docs-only edit, verify links and source agreement; no rebuild
   Info returns with Back; settings and existing measurement behavior remain intact.
 
 - Row expansion and its separate scan button do not trigger each other.
+- After revealing a largest-folder entry, expand/collapse another folder (including
+  an uncached nested folder). Keep the clicked row in view; do not jump back to
+  the old reveal target when children finish loading. Explicit reveals target the
+  folder header, including when that folder already has many expanded descendants.
 - Expand, immediately collapse during loading, and wait: it stays collapsed. Reopen
   works using cached entries. Large directory enumeration does not block the UI.
 - Children sort largest first after measurements; unknown sizes follow.
