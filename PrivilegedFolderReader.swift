@@ -66,7 +66,8 @@ final class PrivilegedFolderReader {
             callbacks.forEach { $0() }
         }
     }
-    /// Launch only the signed fixed-operation bridge. Never run a shell or pass paths.
+    /// Register from DiskMonitor itself so SMAppService records the containing app's
+    /// process identity. Only authenticated scanner IPC runs in the hardened bridge.
     private func run(_ operation: String, receive: @escaping (BridgeMessage) -> Void) {
         if let operationOverride { operationOverride(operation, receive); return }
         let host = self.host
@@ -74,6 +75,22 @@ final class PrivilegedFolderReader {
             func deliver(_ message: BridgeMessage) { DispatchQueue.main.async { receive(message) } }
             do { try BundlePolicy.validate(at: host) }
             catch { deliver(BridgeMessage(event: "packageFailed", error: "Scanner package is unavailable or has an unexpected signature")); return }
+            if ["status", "register", "unregister"].contains(operation) {
+                let service = SMAppService.daemon(plistName: HelperIdentity.serviceID + ".plist")
+                func reply(_ error: Error? = nil) {
+                    let error = error as NSError?
+                    deliver(BridgeMessage(event: "status", status: service.status.rawValue,
+                                          error: error?.localizedDescription,
+                                          errorDomain: error?.domain, errorCode: error?.code))
+                }
+                switch operation {
+                case "register":
+                    do { try service.register(); reply() } catch { reply(error) }
+                case "unregister": service.unregister { reply($0) }
+                default: reply()
+                }
+                return
+            }
             let process = Process()
             process.executableURL = host.appendingPathComponent("Contents/MacOS/" + HelperIdentity.clientName)
             process.arguments = [operation]

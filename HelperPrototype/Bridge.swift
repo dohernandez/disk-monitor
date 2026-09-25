@@ -1,5 +1,4 @@
 import Foundation
-import ServiceManagement
 
 // Signed, hardened client. Only Apple frameworks; no updater or plugin loading.
 // The host app may request only these fixed operations, never paths or commands.
@@ -23,20 +22,8 @@ import ServiceManagement
             return // No service object, IPC, registration or permission access.
         }
         guard CommandLine.arguments.count == 2,
-              ["status", "register", "unregister", "measure", "cancel", "check"].contains(CommandLine.arguments[1]) else { exit(2) }
+              ["measure", "cancel", "check"].contains(CommandLine.arguments[1]) else { exit(2) }
         let operation = CommandLine.arguments[1]
-        let service = SMAppService.daemon(plistName: HelperIdentity.serviceID + ".plist")
-        if operation == "status" { finish(BridgeMessage(event: "status", status: service.status.rawValue)) }
-        if operation == "register" {
-            do { try service.register(); finish(BridgeMessage(event: "status", status: service.status.rawValue)) }
-            catch { finish(BridgeMessage(event: "status", status: service.status.rawValue, error: error.localizedDescription, errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)) }
-        }
-        if operation == "unregister" {
-            service.unregister { error in
-                finish(BridgeMessage(event: "status", status: service.status.rawValue, error: error?.localizedDescription, errorDomain: (error as NSError?)?.domain, errorCode: (error as NSError?)?.code))
-            }
-            RunLoop.current.run(); exit(2)
-        }
         let c = NSXPCConnection(machServiceName: HelperIdentity.serviceID, options: .privileged)
         c.setCodeSigningRequirement(HelperIdentity.requirement(HelperIdentity.serviceID))
         c.remoteObjectInterface = NSXPCInterface(with: SpotlightService.self)

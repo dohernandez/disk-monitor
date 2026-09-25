@@ -358,3 +358,20 @@ joins that reconciliation. It does not report the temporary not-ready state as
 “Folder reader is unavailable”. A successful check resumes the pending folder once;
 a failed check retains its actual error. Startup checks, native prompts and the
 existing Needs Attention permission actions are unchanged.
+
+
+## Service registration owner
+
+PrivilegedFolderReader calls SMAppService status/register/unregister from the main
+DiskMonitor process after package validation, on a utility queue; completion returns
+to the main queue. The secondary ScannerBridge signing identity is only the mutually
+authenticated XPC client. It rejects service-management commands before IPC begins.
+Bundle.main resolving to the containing app did not establish that the calling
+process had the main app's signing identity. Registration now has both the containing
+bundle and its main process identity, matching the working preview's registration
+ownership and Apple's normal app-owned SMAppService pattern.
+
+The existing version/path registration renewal migrates the previous bridge-owned
+registration on upgrade. Approval checks, permission actions, scan scheduling,
+10-second connection deadline and 15-minute measurement budget remain unchanged.
+Live launch after the signed upgrade must still be recorded separately from fixtures.
