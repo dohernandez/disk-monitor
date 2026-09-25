@@ -112,7 +112,7 @@ func diskSpaceAlert(free: Int64, capacity: Int64, thresholds: SpaceThresholds = 
     let critical = percent < Double(thresholds.critical)
     return DiskAlert(id: "space", critical: critical, title: critical ? "Critically low disk space" : "Disk space running low", detail: "\(sizeText(free)) free · warning below \(thresholds.label(thresholds.warning, capacity: capacity)), critical below \(thresholds.label(thresholds.critical, capacity: capacity)).", path: nil)
 }
-enum FolderScanState { case idle, scanning, queued }
+enum FolderScanState { case idle, checking, scanning, queued }
 func isPermissionDiagnostic(_ text: String) -> Bool {
     text.hasPrefix("du: /") && (text.hasSuffix(": Operation not permitted") || text.hasSuffix(": Permission denied"))
 }
@@ -142,9 +142,12 @@ func scopedScanResult(values:[String:Int64],root:String,detail:String)->ScanResu
     }
     return ScanResult(values:values,error:detail.isEmpty ? "Scan failed without diagnostic details" : String(detail.prefix(600)),failures:failures,unlocalized:unknown || failures.isEmpty)
 }
-func mergedReading(old:Reading?,bytes:Int64,error:String?,date:Date,protectedOnly:Bool = false)->Reading {
+func mergedReading(old:Reading?,bytes:Int64,error:String?,date:Date,protectedOnly:Bool = false, elevated:Bool = false)->Reading {
     if error != nil,let old=old,old.incomplete != true {return old}
-    return Reading(bytes:bytes,previous:error==nil && old?.incomplete != true && old?.administratorMeasured != true && old?.missing != true ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error,protectedOnly:error != nil && protectedOnly)
+    let sameMethod = (old?.administratorMeasured == true) == elevated
+    if elevated, error == nil, sameMethod, let old, old.incomplete != true, date <= old.date { return old }
+    let comparable = error == nil && sameMethod && old?.incomplete != true && old?.missing != true
+    return Reading(bytes:bytes,previous:comparable ? old?.bytes : nil,date:date,incomplete:error != nil,scanError:error,protectedOnly:error != nil && protectedOnly,administratorMeasured:elevated ? true : nil)
 }
 // Only explicit absence is deletion evidence. EACCES/EPERM/I/O failures are unknown.
 func confirmsMissingPath(status: Int32, error: Int32) -> Bool {
@@ -210,6 +213,7 @@ final class Model: ObservableObject {
     @Published var revealRequest = 0
     @Published var free: Int64 = 0
     @Published var capacity: Int64 = 0
+    @Published var checkingAccess = false
     @Published var scanning = false
     @Published var status = "Preparing folder measurements…"
     @Published var activePath: String?
@@ -348,7 +352,7 @@ final class Model: ObservableObject {
         func overlaps(_ other: String) -> Bool {
             path == other || path.hasPrefix(other + "/") || other.hasPrefix(path + "/")
         }
-        if let active = activePath, overlaps(active) { return .scanning }
+        if let active = activePath, overlaps(active) { return checkingAccess ? .checking : .scanning }
         if queuedPaths.contains(where: overlaps) { return .queued }
         return .idle
     }
@@ -363,9 +367,13 @@ final class Model: ObservableObject {
         return readings[path]?.protectedOnly == true
     }
     func measurementLabel(_ path: String) -> String {
+        switch scanState(path) {
+        case .checking: return "Checking access…"
+        case .scanning: return "Scanning…"
+        case .queued: return "Queued…"
+        case .idle: break
+        }
         if !FileManager.default.fileExists(atPath: path) { return "Not found" }
-        if let active = activePath, path == active || path.hasPrefix(active + "/") { return "Scanning…" }
-        if queuedPaths.contains(path) { return "Queued…" }
         if isProtected(path) { return "Protected by macOS" }
         return measurementError(path) == nil ? "Not scanned" : "Unreadable"
     }
@@ -410,7 +418,7 @@ final class Model: ObservableObject {
         for root in roots {
             let error = measurementError(root.path)
             if !isProtected(root.path) && ((error != nil && error != "Cancelled") || readings[root.path]?.incomplete == true) {
-                result.append(DiskAlert(id: "scan:" + root.path, critical: false, title: "Incomplete scan · " + root.title, detail: error ?? readings[root.path]?.scanError ?? "Some contents could not be measured. Rescan the folder for specific error details.", path: root.path, measurementIssue: true))
+                result.append(DiskAlert(id: "scan:" + root.path, critical: false, title: (folderAccess.failedBeforeScan.contains(root.path) ? "Scan could not start · " : readings[root.path]?.incomplete == true ? "Incomplete scan · " : "Scan failed · ") + root.title, detail: error ?? readings[root.path]?.scanError ?? "Some contents could not be measured. Rescan the folder for specific error details.", path: root.path, measurementIssue: true))
             }
         }
         // Resolve roots once, not once per saved reading (which also probed the filesystem).
@@ -520,17 +528,28 @@ final class Model: ObservableObject {
     func scan(_ roots: [Root], requestAccess: Bool = false) {
         guard !scanning else { return }
         guard !folderAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
-        scanning = true; scanner.reset(); status = "Checking folder access…"
-        folderAccess.prepare(roots, requestIfNeeded: requestAccess) { [weak self] allowed in
+        scanning = true; checkingAccess = true; queuedPaths = Set(roots.map(\.path)); scanner.reset(); status = "Checking folder access…"
+        folderAccess.prepare(roots, requestIfNeeded: requestAccess, onChecking: { [weak self] root in
+            self?.activePath = root.path; self?.queuedPaths.remove(root.path)
+            self?.status = "Checking access · " + root.title
+        }) { [weak self] allowed in
             guard let self else { return }
-            self.scanning = false
+            self.scanning = false; self.checkingAccess = false; self.activePath = nil; self.queuedPaths = []
             guard !self.scanner.isCancelled else { self.folderAccess.cancelPending(); self.status = "Scan stopped"; return }
-            guard !allowed.isEmpty else { self.status = "Folder unavailable or access required · saved sizes kept"; return }
+            guard !allowed.isEmpty else { self.status = self.completionStatus(for: roots, started: false); return }
             for root in allowed { self.pendingAccessScans.removeValue(forKey: root.path) }
-            self.performScan(allowed)
+            self.performScan(allowed, reportingRoots: roots)
         }
     }
-    private func performScan(_ roots: [Root]) {
+    func completionStatus(for roots: [Root], started: Bool) -> String {
+        if let root = roots.first(where: { measurementError($0.path) != nil && measurementError($0.path) != "Cancelled" && !isProtected($0.path) }) {
+            return (started ? "Scan finished with errors · " : "Scan could not start · ") + (measurementError(root.path) ?? "Unknown error")
+        }
+        if roots.contains(where: { folderAccess.requirements[$0.path] == .backgroundApproval }) { return "Waiting for macOS approval · saved sizes kept" }
+        if roots.contains(where: { folderAccess.requirements[$0.path] == .fileAccess || isProtected($0.path) }) { return "Folder access required · saved sizes kept" }
+        return started ? "Scan finished · \(Date().formatted(date: .omitted, time: .shortened))" : "No folders scanned · saved sizes kept"
+    }
+    private func performScan(_ roots: [Root], reportingRoots: [Root]? = nil) {
         guard !scanning else { return }
         guard !folderAccess.uncertain else { status = "Restart your Mac · scanner completion unconfirmed"; return }
         let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -567,11 +586,7 @@ final class Model: ObservableObject {
                     for (path, bytes) in result.values {
                         let pathError=result.error(for:path)
                         if let pathError=pathError {self.errors[path]=pathError} else {self.errors.removeValue(forKey:path)}
-                        if measurement.elevated && pathError == nil {
-                            self.readings[path] = Reading(bytes: bytes, date: measurement.date, administratorMeasured: true)
-                        } else {
-                            self.readings[path]=mergedReading(old:self.readings[path],bytes:bytes,error:pathError,date:measurement.date,protectedOnly:result.protectedOnly(for:path))
-                        }
+                        self.readings[path]=mergedReading(old:self.readings[path],bytes:bytes,error:pathError,date:measurement.date,protectedOnly:result.protectedOnly(for:path),elevated:measurement.elevated)
                     }
                     if !result.values.isEmpty { self.lastMeasuredAt = max(self.lastMeasuredAt ?? measurement.date, measurement.date) }
                     let cachedPaths = self.childCache.keys.filter { $0 == root.path || $0.hasPrefix(root.path + "/") }
@@ -585,7 +600,7 @@ final class Model: ObservableObject {
             }
             DispatchQueue.main.async {
                 self.scanning = false; self.activePath = nil; self.queuedPaths = []; self.refreshCapacity()
-                self.status = self.scanner.isCancelled ? "Scan stopped · previous readings kept" : "Scan finished · \(Date().formatted(date: .omitted, time: .shortened))"
+                self.status = self.scanner.isCancelled ? "Scan stopped · previous readings kept" : self.completionStatus(for: reportingRoots ?? roots, started: true)
                 if self.scanner.isCancelled { self.folderAccess.cancelPending(); self.pendingAccessScans.removeAll() }
                 else { self.resumeAccessScans() }
 
@@ -661,6 +676,9 @@ struct ScanActivityIndicator: View {
     let path: String
     var body: some View {
         switch model.scanState(path) {
+        case .checking:
+            ProgressView().controlSize(.small).scaleEffect(0.75).frame(width: 16, height: 16)
+                .help("Checking folder access and preparing the scan…").accessibilityLabel("Checking access")
         case .scanning:
             ProgressView().controlSize(.small).scaleEffect(0.75).frame(width: 16, height: 16)
                 .help("Scanning this folder or its contents…").accessibilityLabel("Scanning")
@@ -691,7 +709,7 @@ struct FolderRow: View {
                         Text((r.incomplete == true ? "≥ " : "") + sizeText(r.bytes)).fontWeight(.medium).monospacedDigit()
                         if !FileManager.default.fileExists(atPath: root.path) { Text("Not found · saved size").font(.system(size: 10)).foregroundStyle(Palette.secondary) }
                         if model.scanState(root.path) != .idle {
-                            Text(model.scanState(root.path) == .scanning ? "Scanning…" : "Queued…").font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.accent)
+                            Text(model.scanState(root.path) == .checking ? "Checking access…" : model.scanState(root.path) == .scanning ? "Scanning…" : "Queued…").font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.accent)
                         }
                         if r.administratorMeasured == true { Text("Administrator · saved size").font(.system(size: 10)).foregroundStyle(Palette.secondary) }
                         if r.incomplete == true { Text(model.isProtected(root.path) ? "Partial · protected contents" : "Partial · scan error").font(.system(size: 10)).foregroundStyle(Palette.warning).help(r.scanError ?? model.errors[root.path] ?? "Older partial reading. Rescan this folder for the specific error.") }
@@ -1041,7 +1059,7 @@ struct Dashboard: View {
             HStack(spacing: 8) {
                 if model.scanning { ProgressView().controlSize(.small) }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.status).font(.system(size: 11)).lineLimit(1)
+                    Text(model.status).font(.system(size: 11)).lineLimit(1).help(model.status)
                     Text("Folders: every \(intervalText(model.folderInterval)) · Measured \(model.lastMeasuredAt?.formatted(date: .omitted, time: .shortened) ?? "not yet")")
                         .font(.system(size: 9)).foregroundStyle(Palette.secondary).lineLimit(2)
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -1378,6 +1396,11 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(model.scanState("/fixture/waiting") == .queued)
     precondition(model.scanState("/fixture/waiting/child") == .queued)
     precondition(model.scanState("/fixture/active-other") == .idle)
+    model.checkingAccess = true
+    precondition(model.scanState("/fixture/active") == .checking)
+    precondition(model.measurementLabel("/fixture/active") == "Checking access…")
+    precondition(model.scanState("/fixture/waiting") == .queued)
+    model.checkingAccess = false
     model.scanning = false
     precondition(model.scanState("/fixture/active") == .idle)
     precondition(model.scanState("/fixture/waiting") == .idle)
@@ -1419,6 +1442,9 @@ if CommandLine.arguments.contains("--self-test") {
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(warningModel.measurementError(ordinary.path) == "Reader could not start")
+    precondition(warningModel.alerts.first { $0.path == ordinary.path }?.title == "Scan could not start · Ordinary")
+    precondition(warningModel.completionStatus(for:[ordinary],started:false) == "Scan could not start · Reader could not start")
+    precondition(warningModel.completionStatus(for:[ordinary],started:true).hasPrefix("Scan finished with errors"))
     precondition(warningModel.alerts.filter { $0.id == "scan:" + ordinary.path }.count == 1)
     precondition(warningModel.alerts.first { $0.id == "scan:" + ordinary.path }?.detail == "Reader could not start")
     precondition(diskBadgeLevel(warningModel.alerts) == 1)
@@ -1431,6 +1457,7 @@ if CommandLine.arguments.contains("--self-test") {
     check = .available; allowed = nil
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
+    precondition(warningModel.alerts.first { $0.path == ordinary.path }?.title == "Scan failed · Ordinary")
     precondition(warningModel.measurementError(ordinary.path) == "Earlier I/O failure", "Access recovery must not erase an independent scan error")
     warningModel.errors.removeValue(forKey: ordinary.path)
     precondition(warningModel.alerts.isEmpty && warningModel.measurementError(ordinary.path) == nil)
@@ -1438,6 +1465,14 @@ if CommandLine.arguments.contains("--self-test") {
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(warningModel.alerts.isEmpty, "Pending permission is not an unexpected measurement failure")
+    precondition(warningModel.completionStatus(for:[ordinary],started:false) == "Folder access required · saved sizes kept")
+    gate.cancel(ordinary.path)
+    check = .failed("Scanner connection timed out")
+    warningModel.refreshFolder(ordinary)
+    precondition(warningModel.scanState(ordinary.path) == .checking)
+    drainUntil { !warningModel.scanning }
+    precondition(warningModel.scanState(ordinary.path) == .idle && warningModel.activePath == nil && warningModel.queuedPaths.isEmpty)
+    precondition(warningModel.status == "Scan could not start · Scanner connection timed out")
     gate.cancel(ordinary.path)
     check = .available
     allowed = nil
@@ -1554,6 +1589,20 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(!spotlightReloaded.caches.contains { $0.path == spotlightFolder.path })
     precondition(spotlightReloaded.readings[spotlightFolder.path]?.bytes == 48*gib)
     // Historical elevated readings remain compatible and never create cross-method growth.
+    let baselineDate = Date(timeIntervalSince1970: 100)
+    let adminBaseline = Reading(bytes: 40 * gib, date: baselineDate, administratorMeasured: true)
+    let adminGrown = mergedReading(old:adminBaseline,bytes:52 * gib,error:nil,date:baselineDate.addingTimeInterval(60),elevated:true)
+    precondition(adminGrown.previous == 40 * gib && adminGrown.administratorMeasured == true)
+    let adminShrunk = mergedReading(old:adminGrown,bytes:48 * gib,error:nil,date:baselineDate.addingTimeInterval(120),elevated:true)
+    precondition(adminShrunk.previous == 52 * gib && adminShrunk.bytes - adminShrunk.previous! == -4 * gib)
+    let cachedAdmin = mergedReading(old:adminShrunk,bytes:48 * gib,error:nil,date:adminShrunk.date,elevated:true)
+    precondition(cachedAdmin.previous == adminShrunk.previous && cachedAdmin.date == adminShrunk.date)
+    let failedAdmin = mergedReading(old:adminShrunk,bytes:0,error:"Connection timed out",date:Date(),elevated:true)
+    precondition(failedAdmin.bytes == adminShrunk.bytes && failedAdmin.previous == adminShrunk.previous && failedAdmin.date == adminShrunk.date)
+    let restoredAdmin = try JSONDecoder().decode(Reading.self,from:JSONEncoder().encode(adminShrunk))
+    precondition(restoredAdmin.previous == adminShrunk.previous && restoredAdmin.date == adminShrunk.date)
+    precondition(mergedReading(old:Reading(bytes:1,date:baselineDate),bytes:2,error:nil,date:Date(),elevated:true).previous == nil)
+    precondition(mergedReading(old:adminBaseline,bytes:2,error:nil,date:Date()).previous == nil)
     let authorized = Reading(bytes: 98765, date: Date(), administratorMeasured: true)
     precondition(try! JSONDecoder().decode(Reading.self, from: JSONEncoder().encode(authorized)).administratorMeasured == true)
     precondition(mergedReading(old: authorized, bytes: 111, error: "denied", date: Date()).bytes == 98765)

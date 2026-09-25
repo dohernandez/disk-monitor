@@ -271,3 +271,16 @@ No separate repair, registration or verification buttons should appear.
 - With a large real history, manually check opening the menu popup and scrolling,
   then expand a folder and navigate from a ranked entry. Fixture timing does not
   establish live rendering latency or mouse behavior.
+
+## Preparation feedback and administrator history
+
+- Refresh a folder: show checking-access activity immediately, then scanning activity
+  when measurement starts. Queued siblings stay queued; failure/cancel clears activity.
+- A preparation connection timeout says “Scan could not start” with the same reason
+  in the alert and footer, rather than suggesting missing permission. The full footer
+  is available on hover. Partial batches retain their failure/permission outcome.
+- Consecutive complete administrator readings show increase/decrease. A cached retry
+  keeps the prior delta; failure preserves bytes/date/delta. Changing measurement
+  methods starts a new comparison. JSON round-trip keeps these existing fields.
+- Fixture checks cover these states without scanning the real index. Native spinner,
+  footer hover and live connection behavior still require manual acceptance.
