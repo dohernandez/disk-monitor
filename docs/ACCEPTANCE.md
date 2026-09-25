@@ -47,6 +47,8 @@ check below. For a docs-only edit, verify links and source agreement; no rebuild
 
 ## Settings and alerts
 
+- App updates is the last Settings section; the alert legend follows the threshold controls.
+
 - Current saved values preload. Valid settings apply without restart and survive it.
 - Invalid/empty/fractional/out-of-range input does not change timers or saved values.
 - Back is bottom right, discards edits; Quit is a footer icon. No duplicate top Back.

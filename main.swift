@@ -908,8 +908,6 @@ struct RefreshSettings: View {
             Divider()
             FolderSettings(model: model)
             Divider()
-            UpdateSettings()
-            Divider()
             VStack(alignment: .leading, spacing: 10) {
                 Text("Free-space alerts").font(.system(size: 13, weight: .semibold))
                 HStack {
@@ -957,6 +955,8 @@ struct RefreshSettings: View {
                 }
                 Text("Priority: red, then orange, then yellow. Click the menu bar icon to see the reason for an alert.").font(.system(size: 10)).foregroundStyle(Palette.secondary)
             }.font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+            Divider()
+            UpdateSettings()
         }.padding(20).frame(maxWidth: .infinity, alignment: .topLeading)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { diskSeconds = String(model.diskInterval); folderMinutes = String(model.folderInterval / 60); criticalPercent = String(model.spaceThresholds.critical); warningPercent = String(model.spaceThresholds.warning) }
