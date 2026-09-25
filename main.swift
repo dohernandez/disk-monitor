@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import ServiceManagement
 
 enum PrivateReadings {
     static func protect(_ url: URL, directory: Bool) throws {
@@ -1613,6 +1614,36 @@ if CommandLine.arguments.contains("--self-test") {
     gate.cancel(ordinary.path)
     precondition(gate.permissionRequests.isEmpty)
     startupModel.timer?.invalidate(); startupModel.folderTimer?.invalidate()
+    // A startup registration denied before bootstrap still offers background approval.
+    var deniedOps: [String] = []
+    var deniedReplies: [(BridgeMessage) -> Void] = []
+    let deniedReader = PrivilegedFolderReader(preferences:prefs, operation:{ op, reply in deniedOps.append(op); deniedReplies.append(reply) })
+    let deniedGate = FolderAccess(preferences:prefs, reader:deniedReader, probe:{ _ in .available })
+    startupModel.extras = [protectedRoot]
+    startupModel.folderAccess = deniedGate
+    startupModel.readings[indexPath] = Reading(bytes:100,date:Date())
+    shown = 0
+    startupModel.startFolderMonitoring()
+    deniedReplies.removeFirst()(BridgeMessage(event:"status",status:0))
+    deniedReplies.removeFirst()(BridgeMessage(event:"status",status:0,error:"Operation not permitted",errorDomain:SMAppServiceErrorDomain,errorCode:1))
+    precondition(shown == 1 && deniedGate.permissionRequests.map(\.path) == [indexPath])
+    precondition(deniedReader.registration == 0 && deniedReader.failure == nil && !startupModel.scanning)
+    precondition(!deniedGate.failedBeforeScan.contains(indexPath), "Pending approval is not scan failure")
+    // Automatic preparation does not hammer registration while permission is pending.
+    deniedGate.prepare([protectedRoot],requestIfNeeded:false) { precondition($0.isEmpty) }
+    precondition(deniedOps == ["status", "register"])
+    var deniedResumed = 0
+    deniedGate.onGranted = { deniedResumed += $0.count }
+    deniedGate.willOpenSettings(); deniedGate.returnedFromSettings()
+    deniedReplies.removeFirst()(BridgeMessage(event:"status",status:0))
+    deniedReplies.removeFirst()(BridgeMessage(event:"status",status:1))
+    deniedReplies.removeFirst()(BridgeMessage(event:"access",status:0))
+    precondition(deniedResumed == 1 && deniedGate.permissionRequests.isEmpty && deniedReader.canAutomaticallyMeasure)
+    // An unrelated failure with the same number remains an error, not approval.
+    deniedReader.setEnabled(true)
+    deniedReplies.removeFirst()(BridgeMessage(event:"status",status:0))
+    deniedReplies.removeFirst()(BridgeMessage(event:"status",status:0,error:"Other failure",errorDomain:NSPOSIXErrorDomain,errorCode:1))
+    precondition(!deniedReader.needsBackgroundApproval && deniedReader.failure == "Other failure")
     let configured = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)

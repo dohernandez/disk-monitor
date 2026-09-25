@@ -130,7 +130,7 @@ final class FolderAccess {
     }
     private func privilegedRequirement() -> Requirement? {
         if reader.canAutomaticallyMeasure { return nil }
-        if reader.registration == 2 { return .backgroundApproval }
+        if reader.needsBackgroundApproval { return .backgroundApproval }
         if reader.needsAccess { return .fileAccess }
         return .failed(reader.failure ?? (reader.uncertain ? "Previous scan completion is unconfirmed; restart your Mac" : "Folder reader is unavailable"))
     }
