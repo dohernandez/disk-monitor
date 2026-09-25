@@ -284,3 +284,17 @@ No separate repair, registration or verification buttons should appear.
   methods starts a new comparison. JSON round-trip keeps these existing fields.
 - Fixture checks cover these states without scanning the real index. Native spinner,
   footer hover and live connection behavior still require manual acceptance.
+
+## Startup permissions and upgraded registration
+
+- With recent saved readings and denied access, startup still checks enabled roots
+  and opens the existing popup. Permission actions appear together in Needs Attention.
+- Approve background access or open Full Disk Access from that area, then return:
+  pending access is rechecked and measurement resumes without a second enable switch.
+- Library cache preflight checks immediate child directories without following links
+  or recursively scanning. Unknown deeper restrictions remain possible.
+- Upgrading/moving the app renews registration once; unchanged identity checks access
+  without renewal. Failure alone does not create an automatic registration loop.
+- Fixtures cover identity change/pending approval, unchanged identity, timeout behavior,
+  startup with a recent saved reading, permission visibility and cancellation cleanup.
+  Live upgrade/reapproval and launchd resolution still require runtime acceptance.

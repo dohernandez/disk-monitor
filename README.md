@@ -179,7 +179,7 @@ and Rename/Remove click behavior still require manual acceptance.
 
 Spotlight index is a detected cache with the same tracking toggle, refresh action,
 access flow and scan schedule as other folders. Disk Monitor uses native macOS
-permission prompts and reports denied access on the folder row. There are no
+permission prompts and reports required access in Needs Attention. There are no
 scanner setup or repair windows. The working signed privileged measurement remains
 internal to the single app; ordinary folders use direct filesystem access.
 Saved readings are kept on failures. See [usage details](docs/USAGE.md#shared-folder-access-and-measurement).

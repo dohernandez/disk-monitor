@@ -245,3 +245,12 @@ disk access. Adding a folder does not authorize administrator measurement.
 The general guidance does not extend the Spotlight-only administrator operation to
 other paths. Future protected-folder support requires separate validation. The scanner never
 accepts arbitrary folder paths.
+
+At startup, Disk Monitor checks access for enabled folders even when their saved
+sizes are recent. If action is needed, its normal popup opens with permission
+buttons in Needs Attention. Full Disk Access still requires your action in System
+Settings; the app cannot read or switch that checkbox through a public API. The
+Library caches check includes immediate child directories, but cannot guarantee
+access to every nested item without scanning it. Background approval is checked
+through macOS service status. Updates refresh this app's background registration;
+you may need to approve it again. Saved measurements are retained.
