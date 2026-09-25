@@ -35,6 +35,18 @@ final class FolderAccess {
     var permissionRequests: [Root] {
         pending.values.filter { requirements[$0.path] == .fileAccess || requirements[$0.path] == .backgroundApproval }.sorted { $0.title < $1.title }
     }
+    struct PermissionGroup: Identifiable {
+        let requirement: Requirement
+        let roots: [Root]
+        var id: String { requirement == .backgroundApproval ? "backgroundApproval" : "fileAccess" }
+    }
+    var permissionGroups: [PermissionGroup] {
+        let requests = permissionRequests
+        return [Requirement.backgroundApproval, .fileAccess].compactMap { requirement in
+            let roots = requests.filter { requirements[$0.path] == requirement }
+            return roots.isEmpty ? nil : PermissionGroup(requirement: requirement, roots: roots)
+        }
+    }
     var uncertain: Bool { reader.uncertain }
     var busy: Bool { reader.busy }
     init(preferences: UserDefaults = .standard, reader: PrivilegedFolderReader? = nil,

@@ -376,3 +376,12 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
 - Fixtures cover these transitions. Manual UI acceptance: check text wrapping,
   macOS Quit & Reopen, the fallback power-button quit/reopen, and subsequent scan.
   Permission order alone has not been established as the cause of the live failure.
+
+## Grouped permission requests
+
+- Two folders requiring Full Disk Access show one card, both folder names and one
+  settings button. Background approval appears in its own card when also needed.
+- A folder appears once; successful access removes only that folder, cancellation
+  removes it, and an empty group disappears. Fixtures cover these transitions.
+- Permission checks, restart guidance and exactly-once scan resumption are unchanged.
+  Manually verify wrapping with several long folder names and each Settings action.

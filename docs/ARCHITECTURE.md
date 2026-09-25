@@ -413,3 +413,9 @@ that restart is certainly the cause. Background-approval visits alone do not add
 this advice. It clears when access succeeds, tracking is cancelled or the app exits.
 No restart flag is persisted and no automatic restart or permission reset occurs.
 Startup retains its normal checks of all enabled folders before scanning.
+
+Permission requests are presented as one card per required permission: background
+approval and Full Disk Access. Each card lists its affected pending folders and
+has one Settings action. This grouping is derived from the existing per-folder
+requirements; access checks, Settings-return handling and scan resumption remain
+per folder. Recovery or cancellation removes only the affected folder from its group.
