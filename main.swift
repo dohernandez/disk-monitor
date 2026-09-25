@@ -820,16 +820,19 @@ struct AlertPanel: View {
     var body: some View {
         let alerts = model.alerts
         let level = diskBadgeLevel(alerts)
-        let permissions = model.folderAccess.permissionRequests
+        let permissions = model.folderAccess.permissionGroups
         if !alerts.isEmpty || !permissions.isEmpty {
             VStack(alignment: .leading, spacing: 9) {
                 Label("NEEDS ATTENTION", systemImage: level==1 ? "questionmark.circle.fill" : "exclamationmark.circle.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(level==3 ? Palette.critical : level==2 ? Palette.warning : Palette.uncertainty)
-                ForEach(permissions) { root in
-                    let background = model.folderAccess.requirements[root.path] == .backgroundApproval
+                ForEach(permissions) { group in
+                    let background = group.requirement == .backgroundApproval
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Access required · " + root.title).font(.system(size: 12, weight: .semibold))
+                        Text(background ? "Background access required" : "Full Disk Access required").font(.system(size: 12, weight: .semibold))
+                        Text("Folders: " + group.roots.map(\.title).joined(separator: ", ")).font(.system(size: 10)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
                         Text(background ? "Allow Disk Monitor under Login Items & Extensions → Allow in the Background." : FolderAccess.fullDiskAccessInstructions).font(.system(size: 10)).foregroundStyle(Palette.secondary)
-                        Button(background ? "Open background approval…" : "Open Full Disk Access…") { model.folderAccess.openSettings(for: root) }
+                        Button(background ? "Open background approval…" : "Open Full Disk Access…") {
+                            if let root = group.roots.first { model.folderAccess.openSettings(for: root) }
+                        }
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
                 }
                 ForEach(alerts) { alert in
@@ -1457,10 +1460,19 @@ if CommandLine.arguments.contains("--self-test") {
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(allowed!.isEmpty && gate.requirements[ordinary.path] == .fileAccess && ops.isEmpty)
+    let anotherDenied = Root(path: root.appendingPathComponent("another-denied").path, title: "Another denied folder")
+    gate.reportDenied(anotherDenied)
+    gate.reportDenied(anotherDenied)
+    precondition(gate.permissionGroups.count == 1 && gate.permissionGroups[0].requirement == .fileAccess)
+    precondition(gate.permissionGroups[0].roots.map(\.path) == [anotherDenied.path, ordinary.path], "Shared permission has one group with each pending folder once")
     check = .available; allowed = nil
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(allowed!.count == 1 && gate.requirements[ordinary.path] == nil)
+    precondition(gate.permissionGroups[0].roots.map(\.path) == [anotherDenied.path], "Recovery removes only the recovered folder")
+    gate.cancel(anotherDenied.path)
+    precondition(gate.permissionGroups.isEmpty)
+
     // Access-check failures use the same row diagnostic and tracked-root alert.
     let warningModel = Model(nixStorePath: root.appendingPathComponent("absent-nix-warning").path, home: root.path, preferences: prefs, saveURL: root.appendingPathComponent("warning-state.json"), spotlightPath: indexPath)
     warningModel.folderAccess = gate
@@ -1511,6 +1523,11 @@ if CommandLine.arguments.contains("--self-test") {
     replies.removeFirst()(BridgeMessage(event: "status", status: 2, error: "Operation not permitted"))
     precondition(allowed!.isEmpty && gate.requirements[indexPath] == .backgroundApproval)
     precondition(ops == ["status", "register"], "Native approval must never trigger an unregister/repair loop")
+    gate.reportDenied(ordinary)
+    precondition(gate.permissionGroups.map(\.requirement) == [.backgroundApproval, .fileAccess], "Different permissions remain separate requests")
+    precondition(gate.permissionGroups.map { $0.roots.map(\.path) } == [[indexPath], [ordinary.path]])
+    gate.cancel(ordinary.path)
+
     allowed = nil
     gate.prepare([protectedRoot], requestIfNeeded: true) { allowed = $0 }
     replies.removeFirst()(BridgeMessage(event: "status", status: 1))
