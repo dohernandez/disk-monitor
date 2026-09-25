@@ -314,3 +314,16 @@ No separate repair, registration or verification buttons should appear.
 - Live acceptance after upgrading: approved registration must launch its bundled
   executable and complete access validation/measurement. Test returning during the
   check and confirm no transient unavailable alert. Package tests do not prove this.
+
+
+## Main-process service ownership
+
+- The internal bridge rejects status/register/unregister with exit 2 and no output;
+  the fixture executes these commands without registration or XPC side effects.
+- Registration, approval, cancellation and upgrade lifecycle fixtures still pass with
+  the same operation replies. Main-app service calls remain off the UI thread and
+  return callbacks on the main queue.
+- Upgrade a bridge-registered release: existing identity renewal unregisters/re-registers
+  from DiskMonitor. Verify launchd resolves the bundled Scanner, the handshake succeeds,
+  and a requested scan completes. Do not substitute a longer connection timeout or
+  reset global background-task/permission state. Live acceptance is not a build result.

@@ -41,3 +41,10 @@ with tempfile.TemporaryDirectory(prefix='scanner-container-') as directory:
         'CFBundlePackageType': 'APPL'}))
     shutil.copy2(build / 'bridge-compile-check', macos / 'ScannerBridge')
     subprocess.run([str(macos / 'ScannerBridge'), '--bundle-self-test'], check=True, timeout=10)
+
+# Registration belongs to DiskMonitor, never this secondary signing identity.
+# These rejected commands must exit before creating IPC or touching SMAppService.
+for operation in ('status', 'register', 'unregister'):
+    result = subprocess.run([str(build / 'bridge-compile-check'), operation], capture_output=True, timeout=10)
+    assert result.returncode == 2 and not result.stdout, 'Bridge must reject service-management operations'
+print('PASS: internal bridge cannot register or manage the app service')

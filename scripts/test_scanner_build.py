@@ -26,6 +26,16 @@ class ScannerBuildTests(unittest.TestCase):
         self.assertFalse((root / 'SpotlightAccess.swift').exists())
         self.assertNotIn('NSWindow', (root / 'PrivilegedFolderReader.swift').read_text())
 
+    def test_service_management_is_owned_by_main_app(self):
+        root = Path(__file__).resolve().parents[1]
+        bridge = (root / 'HelperPrototype/Bridge.swift').read_text()
+        reader = (root / 'PrivilegedFolderReader.swift').read_text()
+        self.assertNotIn('import ServiceManagement', bridge)
+        self.assertNotIn('SMAppService', bridge)
+        self.assertIn('SMAppService.daemon(plistName: HelperIdentity.serviceID + ".plist")', reader)
+        # Native registration must occur before launching the IPC-only child.
+        self.assertLess(reader.index('try service.register()'), reader.index('let process = Process()'))
+
     def test_release_rejects_missing_scanner_before_running_app(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch('check_app.subprocess.run') as execute:
