@@ -170,7 +170,10 @@ final class FolderAccess {
             reader.accessSettingsChanged { [weak self] in
                 guard let self else { return }
                 for root in roots where PrivilegedFolderReader.supports(root.path) && self.pending[root.path] != nil {
-                    self.requirements[root.path] = self.privilegedRequirement()
+                    let requirement = self.privilegedRequirement()
+                    self.requirements[root.path] = requirement
+                    if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
+                    else { self.failedBeforeScan.remove(root.path) }
                 }
                 self.onChange?()
             }

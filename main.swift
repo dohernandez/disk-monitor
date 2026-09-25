@@ -1525,6 +1525,33 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(resumedRoots.map(\.path) == [indexPath], "Permission return must resume once")
     gate.returnedFromSettings()
     precondition(resumedRoots.count == 1 && replies.isEmpty)
+    // Approval polling can reach access validation before Settings returns focus.
+    // Keep the pending permission until that check completes; never invent a failure.
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 2))
+    gate.prepare([protectedRoot], requestIfNeeded: false) { _ in }
+    resumedRoots.removeAll()
+    reader.setEnabled(true) // The approval poll has already started reconciliation.
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    let checkingOperations = ops.count
+    gate.willOpenSettings(); gate.returnedFromSettings()
+    precondition(gate.requirements[indexPath] == .backgroundApproval && resumedRoots.isEmpty,
+                 "Settings return must wait for an in-flight check, not report unavailable")
+    precondition(ops.count == checkingOperations, "Returning must join the existing check")
+    replies.removeFirst()(BridgeMessage(event: "access", status: 0))
+    precondition(gate.requirements[indexPath] == nil && resumedRoots.map(\.path) == [indexPath])
+    gate.returnedFromSettings()
+    precondition(resumedRoots.count == 1 && replies.isEmpty)
+    // A real check failure retains its cause and is a start failure, not a scan.
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 2))
+    gate.prepare([protectedRoot], requestIfNeeded: false) { _ in }
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    gate.willOpenSettings(); gate.returnedFromSettings()
+    replies.removeFirst()(BridgeMessage(event: "launchFailed", error: "Scanner connection timed out"))
+    precondition(gate.requirements[indexPath] == .failed("Scanner connection timed out"))
+    precondition(gate.failedBeforeScan.contains(indexPath) && resumedRoots.count == 1)
     // A new uncached measurement is cancelled through the same folder owner.
     reader.setEnabled(false)
     replies.removeFirst()(BridgeMessage(event: "status", status: 1))

@@ -1,7 +1,7 @@
 # Releases, installation and main-branch protection
 
 Version **1.0.0** is the first stable version. Stable describes the accepted feature
-baseline; builds are still **ad-hoc signed, not Apple Developer ID-signed or notarized**.
+baseline; release builds use a **dedicated self-signed certificate, not Apple Developer ID signing or notarization**. Unsigned source/PR builds remain ad-hoc signed.
 Only the public update key is stored in this repository; private signing seeds and
 Apple credentials are not.
 
@@ -44,7 +44,8 @@ Disk self-tests use temporary saved-state paths, including permission-migration 
 After a main build passes all checks:
 
 1. Reserve a semantic version tag at the exact tested commit.
-2. Download those tested app bundles, stamp their release version, and re-sign locally.
+2. Build the scanner-enabled app with its final release version and build number,
+   signing the host and internal executables with the dedicated release certificate.
 3. Create one DMG and SHA-256 file per architecture; verify each mounted image.
 4. Sign each final DMG and its architecture-specific appcast with Ed25519.
 5. Verify both feeds and installers against the committed public key, upload all
@@ -186,13 +187,15 @@ key independently.
 build validation, not a credential. When absent, the build contains no privileged
 scanner and cannot register one. When present, the signer must already be available
 in the build keychain. The internal ScannerBridge and Scanner executables are signed with hardened runtime and no library-validation exemption. The parent
-app keeps its existing signing policy and updater.
+app uses that same certificate, with its existing bundle identifier and updater.
 
 Never place the scanner private key on runtime Macs, commit it or expose it to PR
 jobs. A dedicated stable release key must be provisioned before enabling this
 feature in releases. Prototype keys are temporary
-and retired; they are not release identities. The installer may re-sign only the
-outer ad-hoc app and must preserve and verify both internal executable signatures.
+and retired; they are not release identities. The installer preserves the already signed bundle byte-for-byte. It rejects a
+requested version/build mismatch instead of stamping metadata and replacing the
+host signature with an ad-hoc signature. No signing key is needed during packaging.
+Package validation pins the host certificate as well as both internal executables.
 The obsolete nested scanner app layout is rejected by packaging. The client’s
 --bundle-self-test checks that it resolves Disk Monitor as its containing app without
 registering, connecting to a service or requesting access.

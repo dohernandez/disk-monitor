@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,6 +88,49 @@ class ScannerBuildTests(unittest.TestCase):
             self.assertNotIn('ProgramArguments', value)
             self.assertEqual(value['AssociatedBundleIdentifiers'], ['local.darien.diskmonitor'])
             self.assertFalse((root / 'Disk Monitor.app/Contents/Library/Scanner').exists())
+
+    def test_signed_release_rejects_restamping_before_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / 'Fixture.app'
+            (app / 'Contents/MacOS').mkdir(parents=True)
+            (app / 'Contents/MacOS/Scanner').touch()
+            (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleShortVersionString': '1.2.3', 'CFBundleVersion': '52'}))
+            for version, build in [('1.2.4', '52'), ('1.2.3', '53')]:
+                with patch('package.check'), patch('package.subprocess.run') as execute:
+                    with self.assertRaisesRegex(ValueError, 'final version and build'):
+                        package(app, version, build, Path(directory) / 'out', require_scanner=True)
+                    execute.assert_not_called()
+            self.assertFalse((Path(directory) / 'out').exists())
+
+    def test_signed_release_preserves_all_bundle_bytes_without_signer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / 'Fixture.app'
+            (app / 'Contents/MacOS').mkdir(parents=True)
+            (app / 'Contents/MacOS/Scanner').write_bytes(b'fixture executable')
+            (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleShortVersionString': '1.2.3', 'CFBundleVersion': '52'}))
+            (app / 'Contents/_CodeSignature').mkdir()
+            (app / 'Contents/_CodeSignature/CodeResources').write_bytes(b'fixture seal')
+            staged = None
+            def execute(args, **kwargs):
+                nonlocal staged
+                if args[0] == 'ditto':
+                    shutil.copytree(args[1], args[2]); staged = Path(args[2]).parent
+                elif args[:2] == ['hdiutil', 'create']:
+                    Path(args[-1]).write_bytes(b'fixture image')
+                elif args[:2] == ['hdiutil', 'attach']:
+                    shutil.copytree(staged, Path(args[args.index('-mountpoint') + 1]), dirs_exist_ok=True, symlinks=True)
+                else:
+                    self.assertIn(args[:2], [['hdiutil', 'verify'], ['hdiutil', 'detach']])
+            def verify(candidate, **kwargs):
+                for source in app.rglob('*'):
+                    if source.is_file():
+                        self.assertEqual((candidate / source.relative_to(app)).read_bytes(), source.read_bytes())
+            with patch('package.check', side_effect=verify), patch('package.subprocess.run', side_effect=execute), patch('package.write_info') as write_info:
+                image = package(app, '1.2.3', '52', Path(directory) / 'out', require_scanner=True)
+                self.assertTrue(image.is_file())
+                write_info.assert_not_called()
 
     def test_release_packager_cannot_erase_scanner_identity(self):
         with tempfile.TemporaryDirectory() as directory:

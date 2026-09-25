@@ -45,6 +45,6 @@ else
         exit 1
     fi
 fi
-codesign --force --sign - "$app"
+codesign --force --timestamp=none --sign "${SCANNER_SIGNING_SHA1:--}" "$app"
 codesign --verify --deep --strict "$app"
 printf '%s\n' "$app"

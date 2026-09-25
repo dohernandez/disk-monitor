@@ -33,7 +33,7 @@ enum BundlePolicy {
     }
     static func validate(at bundle: URL) throws {
         try validateMetadata(at: bundle)
-        for (path, identifier) in [(bundle.appendingPathComponent("Contents/MacOS/" + HelperIdentity.clientName), HelperIdentity.appID), (bundle.appendingPathComponent("Contents/MacOS/Scanner"), HelperIdentity.serviceID)] {
+        for (path, identifier) in [(bundle, HelperIdentity.containerID), (bundle.appendingPathComponent("Contents/MacOS/" + HelperIdentity.clientName), HelperIdentity.appID), (bundle.appendingPathComponent("Contents/MacOS/Scanner"), HelperIdentity.serviceID)] {
             var code: SecStaticCode?
             var requirement: SecRequirement?
             guard SecStaticCodeCreateWithPath(path as CFURL, [], &code) == errSecSuccess,

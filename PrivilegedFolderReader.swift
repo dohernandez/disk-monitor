@@ -214,7 +214,10 @@ final class PrivilegedFolderReader {
         callbacks.forEach { $0() }
     }
     func accessSettingsChanged(completion: @escaping () -> Void) {
-        guard enabled, !busy, !reconciling, !uncertain else { completion(); return }
+        guard enabled, !busy, !uncertain else { completion(); return }
+        // Approval polling may already be checking the newly approved service.
+        // Join that check rather than exposing its temporary not-ready state.
+        if reconciling { lifecycleCallbacks.append(completion); return }
         restartAfterPermission = needsAccess
         setEnabled(true, completion: completion)
     }
