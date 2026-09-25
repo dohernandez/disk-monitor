@@ -29,6 +29,8 @@ def check(app, require_scanner=False):
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--self-test'], check=True, timeout=120)
     if has_scanner:
+        from scanner_constraint import check as check_constraint
+        check_constraint(app)
         subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--scanner-package-self-test'], check=True, timeout=30)
         subprocess.run([str(binaries[1]), '--bundle-self-test'], check=True, timeout=10)
         for signed in binaries:

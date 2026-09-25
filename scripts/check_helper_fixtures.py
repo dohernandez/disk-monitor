@@ -48,3 +48,42 @@ for operation in ('status', 'register', 'unregister'):
     result = subprocess.run([str(build / 'bridge-compile-check'), operation], capture_output=True, timeout=10)
     assert result.returncode == 2 and not result.stdout, 'Bridge must reject service-management operations'
 print('PASS: internal bridge cannot register or manage the app service')
+
+# Exercise launch constraints with the kernel, without registering a service.
+# The invalid argument exits at the helper's first guard, including when run as root.
+from scanner_constraint import SERVICE, constraint, check as check_constraint
+launch_check = build / 'launch-constraint-check'
+compiler = base.copy()
+compiler.remove('-parse-as-library')
+subprocess.run(compiler + [str(root / 'scripts/check_launch_constraint.swift'), '-o', str(launch_check)], check=True)
+with tempfile.TemporaryDirectory(prefix='scanner-launch-') as directory:
+    app = Path(directory) / 'Fixture.app'
+    scanner = app / 'Contents/MacOS/Scanner'
+    scanner.parent.mkdir(parents=True)
+    shutil.copy2(build / 'scanner-compile-check', scanner)
+    subprocess.run(['codesign', '--force', '--sign', '-', '--identifier', SERVICE, str(scanner)], check=True)
+    plist = app / f'Contents/Library/LaunchDaemons/{SERVICE}.plist'
+    plist.parent.mkdir(parents=True)
+    expected = constraint(app)
+    plist.write_bytes(plistlib.dumps({'SpawnConstraint': expected}))
+    check_constraint(app)
+    subprocess.run([str(launch_check), str(app)], check=True, timeout=20)
+    plist.write_bytes(plistlib.dumps({'SpawnConstraint': dict(expected, cdhash=b'\0' * 20)}))
+    try:
+        check_constraint(app)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Stale scanner hash passed package validation')
+    plist.write_bytes(plistlib.dumps({}))
+    try:
+        check_constraint(app)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Missing launch constraint passed package validation')
+# Main-only builds additionally test the real release-signed executable.
+release_app = build / 'Disk Monitor.app'
+if (release_app / 'Contents/MacOS/Scanner').exists():
+    check_constraint(release_app)
+    subprocess.run([str(launch_check), str(release_app)], check=True, timeout=20)
