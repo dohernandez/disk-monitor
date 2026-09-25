@@ -371,8 +371,16 @@ final class Model: ObservableObject {
         return .idle
     }
     @Published var protectedPaths: Set<String> = []
+    var statusDetail: String {
+        guard let advice = folderAccess.requirements.keys.compactMap({ folderAccess.restartGuidance(for: $0) }).first,
+              !status.contains(advice) else { return status }
+        return status + "\n" + advice
+    }
     func measurementError(_ path: String) -> String? {
-        if case .failed(let reason) = folderAccess.requirements[path] { return reason }
+        if case .failed(let reason) = folderAccess.requirements[path] {
+            if let advice = folderAccess.restartGuidance(for: path) { return reason + "\n" + advice }
+            return reason
+        }
         return errors[path]
     }
     func isProtected(_ path: String) -> Bool {
@@ -560,7 +568,10 @@ final class Model: ObservableObject {
             return (started ? "Scan finished with errors · " : "Scan could not start · ") + (measurementError(root.path) ?? "Unknown error")
         }
         if roots.contains(where: { folderAccess.requirements[$0.path] == .backgroundApproval }) { return "Waiting for macOS approval · saved sizes kept" }
-        if roots.contains(where: { folderAccess.requirements[$0.path] == .fileAccess || isProtected($0.path) }) { return "Folder access required · saved sizes kept" }
+        if roots.contains(where: { folderAccess.requirements[$0.path] == .fileAccess || isProtected($0.path) }) {
+            let advice = roots.compactMap { folderAccess.restartGuidance(for: $0.path) }.first
+            return "Folder access required · saved sizes kept" + (advice.map { "\n" + $0 } ?? "")
+        }
         return started ? "Scan finished · \(Date().formatted(date: .omitted, time: .shortened))" : "No folders scanned · saved sizes kept"
     }
     private func performScan(_ roots: [Root], reportingRoots: [Root]? = nil) {
@@ -820,7 +831,7 @@ struct AlertPanel: View {
                     let background = model.folderAccess.requirements[root.path] == .backgroundApproval
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Access required · " + root.title).font(.system(size: 12, weight: .semibold))
-                        Text(background ? "Allow Disk Monitor under Login Items & Extensions → Allow in the Background." : "macOS denied access. Review Full Disk Access for Disk Monitor, then return here to recheck. Some system restrictions may still apply.").font(.system(size: 10)).foregroundStyle(Palette.secondary)
+                        Text(background ? "Allow Disk Monitor under Login Items & Extensions → Allow in the Background." : FolderAccess.fullDiskAccessInstructions).font(.system(size: 10)).foregroundStyle(Palette.secondary)
                         Button(background ? "Open background approval…" : "Open Full Disk Access…") { model.folderAccess.openSettings(for: root) }
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
                 }
@@ -1027,7 +1038,7 @@ struct Dashboard: View {
                         Divider()
                         Text("Folders protected by macOS").font(.headline).foregroundStyle(Palette.primary)
                         Text("Protected by macOS means a permission restriction prevented a complete measurement; it does not mean the folder is empty. Partial · protected contents shows only the readable portion. Earlier complete sizes keep their original measurement date.")
-                        Text("For any affected folder, check System Settings → Privacy & Security → Full Disk Access for Disk Monitor. After allowing access, return to Disk Monitor to continue the requested scan. Full Disk Access grants broad access and may not unlock every system-owned folder.")
+                        Text("For any affected folder, check System Settings → Privacy & Security → Full Disk Access for Disk Monitor. After enabling access, choose macOS’s Quit & Reopen if offered. If access remains blocked, quit Disk Monitor using the power button and open it again; startup checks access again before scanning. Full Disk Access grants broad access and may not unlock every system-owned folder.")
                         Text("All folders use the same access and scan flow. macOS shows its native permission prompts where supported. Protected data that requires administrator access is read internally after macOS approval. If access is denied, the folder shows its status and keeps saved measurements. Full Disk Access is managed in System Settings and does not override every system restriction. No separate scanner setup window is required.")
                         Text("Adding a folder never grants administrator access. Some system folders need a separately supported measurement method and may remain protected. Disk Monitor never changes folder permissions or deletes monitored files.")
                     }.font(.system(size: 12)).foregroundStyle(Palette.secondary).padding(20)
@@ -1067,7 +1078,7 @@ struct Dashboard: View {
             HStack(spacing: 8) {
                 if model.scanning { ProgressView().controlSize(.small) }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.status).font(.system(size: 11)).lineLimit(1).help(model.status)
+                    Text(model.status).font(.system(size: 11)).lineLimit(1).help(model.statusDetail)
                     Text("Folders: every \(intervalText(model.folderInterval)) · Measured \(model.lastMeasuredAt?.formatted(date: .omitted, time: .shortened) ?? "not yet")")
                         .font(.system(size: 9)).foregroundStyle(Palette.secondary).lineLimit(2)
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -1553,6 +1564,55 @@ if CommandLine.arguments.contains("--self-test") {
     replies.removeFirst()(BridgeMessage(event: "launchFailed", error: "Scanner connection timed out"))
     precondition(gate.requirements[indexPath] == .failed("Scanner connection timed out"))
     precondition(gate.failedBeforeScan.contains(indexPath) && resumedRoots.count == 1)
+    // Background approval alone must not invent an FDA/restart diagnosis.
+    precondition(gate.restartGuidance(for: indexPath) == nil)
+    // FDA applies to the whole app: reviewing it for an ordinary folder also
+    // supplies conditional guidance for the pending privileged reader failure.
+    check = .failed("Prior ordinary access check"); allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    check = .permissionRequired
+    gate.willOpenSettings(fullDiskAccess: true); gate.returnedFromSettings()
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    replies.removeFirst()(BridgeMessage(event: "launchFailed", error: "Scanner connection timed out"))
+    drainUntil { gate.requirements[ordinary.path] == .fileAccess }
+    precondition(gate.restartGuidance(for: indexPath) == FolderAccess.restartAdvice)
+    precondition(gate.restartGuidance(for: ordinary.path) == FolderAccess.restartAdvice)
+    precondition(gate.requirements[indexPath] == .failed("Scanner connection timed out"), "Guidance must retain the actual failure")
+    precondition(warningModel.measurementError(indexPath) == "Scanner connection timed out\n" + FolderAccess.restartAdvice)
+    precondition(warningModel.completionStatus(for: [ordinary], started: false).contains(FolderAccess.restartAdvice))
+    warningModel.status = "Scan could not start · Scanner connection timed out"
+    precondition(warningModel.statusDetail.contains(FolderAccess.restartAdvice))
+    precondition(resumedRoots.count == 1, "A settings visit is not evidence that access was granted")
+    let reviewedOps = ops.count
+    gate.returnedFromSettings()
+    precondition(ops.count == reviewedOps, "Repeated activation must not retry or relaunch")
+    check = .available; allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    precondition(gate.restartGuidance(for: ordinary.path) == nil)
+    reader.setEnabled(true)
+    replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    replies.removeFirst()(BridgeMessage(event: "access", status: 0))
+    precondition(gate.restartGuidance(for: indexPath) == nil && resumedRoots.count == 2)
+    gate.reportDenied(ordinary)
+    gate.willOpenSettings(fullDiskAccess: true); gate.returnedFromSettings()
+    gate.cancel(ordinary.path)
+    precondition(gate.restartGuidance(for: ordinary.path) == nil)
+    // A fresh application instance performs the normal startup check. No restart
+    // suggestion is persisted or permission approval assumed across launches.
+    do {
+        var restartReplies: [(BridgeMessage) -> Void] = []
+        let freshReader = PrivilegedFolderReader(preferences: prefs, operation: { _, reply in restartReplies.append(reply) })
+        let freshGate = FolderAccess(preferences: prefs, reader: freshReader, probe: { _ in .available })
+        var checked = false
+        freshGate.synchronize([protectedRoot, ordinary], checkingAccess: true) { checked = true }
+        restartReplies.removeFirst()(BridgeMessage(event: "status", status: 1))
+        restartReplies.removeFirst()(BridgeMessage(event: "access", status: 0))
+        drainUntil { checked }
+        precondition(freshReader.canAutomaticallyMeasure && freshGate.requirements.isEmpty)
+        precondition(freshGate.restartGuidance(for: indexPath) == nil && freshGate.restartGuidance(for: ordinary.path) == nil)
+    }
     // A new uncached measurement is cancelled through the same folder owner.
     reader.setEnabled(false)
     replies.removeFirst()(BridgeMessage(event: "status", status: 1))

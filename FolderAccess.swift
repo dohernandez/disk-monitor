@@ -18,6 +18,17 @@ final class FolderAccess {
     private(set) var failedBeforeScan: Set<String> = []
     private(set) var requirements: [String: Requirement] = [:]
     private var waitingForSettings = false
+    private var reviewingFullDiskAccess = false
+    private var fullDiskAccessReviewPaths: Set<String> = []
+    static let fullDiskAccessInstructions = "Allow Disk Monitor in Full Disk Access. If macOS offers Quit & Reopen, choose it. If access is still blocked and macOS did not restart the app, quit Disk Monitor using the power button, then open it again. Access is checked at startup; some system restrictions may still apply."
+    static let restartAdvice = "If you enabled Full Disk Access, quit and reopen Disk Monitor to apply it, then retry. Use macOS’s Quit & Reopen if offered, or the app’s power button to quit."
+    func restartGuidance(for path: String) -> String? {
+        guard fullDiskAccessReviewPaths.contains(path) else { return nil }
+        switch requirements[path] {
+        case .fileAccess, .failed: return Self.restartAdvice
+        default: return nil
+        }
+    }
     private var activationObserver: NSObjectProtocol?
     var onGranted: (([Root]) -> Void)?
     var onChange: (() -> Void)?
@@ -34,7 +45,7 @@ final class FolderAccess {
         self.reader.onReady = { [weak self] in
             guard let self else { return }
             let ready = self.pending.values.filter { PrivilegedFolderReader.supports($0.path) }
-            for root in ready { self.pending.removeValue(forKey: root.path); self.requirements.removeValue(forKey: root.path); self.failedBeforeScan.remove(root.path) }
+            for root in ready { self.pending.removeValue(forKey: root.path); self.requirements.removeValue(forKey: root.path); self.failedBeforeScan.remove(root.path); self.fullDiskAccessReviewPaths.remove(root.path) }
             if !ready.isEmpty { self.onGranted?(Array(ready)) }
             self.onChange?()
         }
@@ -84,7 +95,7 @@ final class FolderAccess {
             self.prepare(checkingAccess ? roots : roots.filter { PrivilegedFolderReader.supports($0.path) }, requestIfNeeded: false) { _ in completion() }
         }
     }
-    func cancel(_ path: String) { failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }
+    func cancel(_ path: String) { fullDiskAccessReviewPaths.remove(path); failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }
     func cancelPending() { for path in Array(revisions.keys) { cancel(path) }; pending.removeAll() }
     func cancelMeasurement() { reader.cancel() }
     func prepare(_ roots: [Root], requestIfNeeded: Bool, onChecking: @escaping (Root) -> Void = { _ in }, completion: @escaping ([Root]) -> Void) {
@@ -103,7 +114,7 @@ final class FolderAccess {
                 if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
                 else { self.failedBeforeScan.remove(root.path) }
                 if let requirement { self.requirements[root.path] = requirement; self.pending[root.path] = root }
-                else { self.requirements.removeValue(forKey: root.path); self.pending.removeValue(forKey: root.path); allowed.append(root) }
+                else { self.requirements.removeValue(forKey: root.path); self.pending.removeValue(forKey: root.path); self.fullDiskAccessReviewPaths.remove(root.path); allowed.append(root) }
                 next(index + 1)
             }
             // Capability selection is internal; both readers return to this same gate.
@@ -155,14 +166,22 @@ final class FolderAccess {
     }
     func reportDenied(_ root: Root) { pending[root.path] = root; requirements[root.path] = .fileAccess; onChange?() }
     func openSettings(for root: Root) {
-        willOpenSettings()
+        willOpenSettings(fullDiskAccess: requirements[root.path] != .backgroundApproval)
         if requirements[root.path] == .backgroundApproval { SMAppService.openSystemSettingsLoginItems() }
         else { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!) }
     }
-    func willOpenSettings() { waitingForSettings = true }
+    func willOpenSettings(fullDiskAccess: Bool = false) {
+        waitingForSettings = true
+        reviewingFullDiskAccess = fullDiskAccess
+    }
     func returnedFromSettings() {
         guard waitingForSettings else { return }; waitingForSettings = false
         let roots = Array(pending.values)
+        // Settings is not an approval API. Remember only that FDA was reviewed,
+        // never infer that it was granted or that a restart is definitely required.
+        if reviewingFullDiskAccess { fullDiskAccessReviewPaths.formUnion(roots.map(\.path)) }
+        reviewingFullDiskAccess = false
+        onChange?()
         let ordinary = roots.filter { !PrivilegedFolderReader.supports($0.path) }
         // The reader's onReady callback owns resuming elevated requests exactly once.
         // Do not submit them again through the settings-return completion.
