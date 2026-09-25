@@ -292,3 +292,13 @@ rows and tracked-root alerts use this same diagnostic, preserving saved bytes an
 dates. A recovered access check clears only its own failure; independent scan errors
 remain until measurement resolves them. Permission approval states retain their
 existing Settings actions and do not by themselves create measurement warnings.
+
+## Dashboard calculation cost
+
+Alert and largest-folder calculations snapshot tracked roots and saved readings
+once per evaluation. They do not rediscover cache folders for each saved entry.
+Growth filtering rejects unchanged/small/partial readings before testing ownership.
+AlertPanel and LargestFolders each compute their displayed list once per body,
+including badge styling and chart scale; child sorting also reuses one readings
+snapshot. These are local snapshots, so preference and measurement changes remain
+visible on the next evaluation without a persistent derived-state cache.
