@@ -39,6 +39,7 @@ if [ -n "${SCANNER_SIGNING_SHA1:-}" ]; then
     xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -parse-as-library -swift-version 5 -O -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" HelperPrototype/Shared.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Bridge.swift "$build_dir/ScannerIdentity.swift" -framework ServiceManagement -o "$host/Contents/MacOS/ScannerBridge"
     codesign --force --options runtime --timestamp=none --sign "$SCANNER_SIGNING_SHA1" --identifier local.darien.diskmonitor.scanner.service "$host/Contents/MacOS/Scanner"
     codesign --force --options runtime --timestamp=none --sign "$SCANNER_SIGNING_SHA1" --identifier local.darien.diskmonitor.scanner.client "$host/Contents/MacOS/ScannerBridge"
+    python3 scripts/scanner_constraint.py "$app"
 else
     if [ -e "$app/Contents/MacOS/Scanner" ] || [ -e "$app/Contents/MacOS/ScannerBridge" ]; then
         echo "Refusing an unsigned build over a scanner-enabled bundle. Use a fresh BUILD_DIR." >&2

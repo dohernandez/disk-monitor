@@ -384,3 +384,19 @@ only poll while waiting; returning from Settings may retry registration once, th
 validate access and resume the pending folder once. Other domains/codes remain
 failures. This handles a disabled background item after upgrade renewal without
 adding permission UI or changing ordinary folder access checks.
+
+## Explicit scanner launch constraint
+
+The daemon plist's `SpawnConstraint` pins the scanner signing identifier and final
+CodeDirectory hash. Build generation runs after signing Scanner and before signing
+the containing app; packaging rejects a missing or mismatched constraint. This
+makes the intended executable explicit to SMAppService instead of relying on its
+automatically derived requirement for a self-signed bundle. The hash changes with
+the binary; existing version/path renewal re-registers the updated plist.
+
+On the affected Mac, build 59 was approved but launchd killed Scanner with
+`c[5]p[1]m[1]e[0]` (spawn constraint mismatch), before any measurement. Kernel launch
+fixtures accept the pinned executable and reject an incorrect hash, with an argument
+that exits before service initialization. These checks do not prove SMAppService's
+live upgrade registration; that acceptance remains required. Permission logic,
+certificate trust, IPC authentication and measurement deadlines are unchanged.
