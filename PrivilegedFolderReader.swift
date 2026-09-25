@@ -20,6 +20,10 @@ final class PrivilegedFolderReader {
     private var lifecycleRevision = 0
     private var activeRevision = 0
     var uncertain = false
+    static var currentRegistrationIdentity: String {
+        Bundle.main.bundleURL.standardizedFileURL.path + "#" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")
+    }
+    private let registrationIdentity: String
     private let preferences: UserDefaults
     private let pendingKey = "spotlightPendingScanBoot"
     private var timer: Timer?
@@ -38,7 +42,8 @@ final class PrivilegedFolderReader {
     var canAutomaticallyMeasure: Bool {
         enabled && ready && packageValid && registration == 1 && failure == nil && !needsAccess && !uncertain
     }
-    init(preferences: UserDefaults, operation: ((String, @escaping (BridgeMessage) -> Void) -> Void)? = nil) {
+    init(preferences: UserDefaults, registrationIdentity: String = PrivilegedFolderReader.currentRegistrationIdentity, operation: ((String, @escaping (BridgeMessage) -> Void) -> Void)? = nil) {
+        self.registrationIdentity = registrationIdentity
         self.operationOverride = operation
         self.preferences = preferences
         uncertain = ScannerRecovery.needsRecovery(pendingBoot: preferences.string(forKey: pendingKey), currentBoot: ScannerRecovery.bootSession())
@@ -120,7 +125,7 @@ final class PrivilegedFolderReader {
                     self.finishReconciliation(); self.onChange?()
                 }
                 else { self.removeRegistration() }
-            } else if (self.registration == 1 || self.registration == 2) && !self.preferences.bool(forKey: "scannerClientIdentityV2") {
+            } else if (self.registration == 1 || self.registration == 2) && (!self.preferences.bool(forKey: "scannerClientIdentityV2") || self.preferences.string(forKey: "scannerRegisteredAppBuild") != self.registrationIdentity) {
                 self.restartRegistration()
             } else if self.registration == 2 {
                 self.startTimer(); self.finishReconciliation()
@@ -139,11 +144,13 @@ final class PrivilegedFolderReader {
                 self.finishReconciliation()
             } else if self.registration == 2 {
                 self.preferences.set(true, forKey: "scannerClientIdentityV2")
+                self.preferences.set(self.registrationIdentity, forKey: "scannerRegisteredAppBuild")
                 self.failure = nil; self.startTimer(); self.finishReconciliation()
             } else if let error = reply.error {
                 self.failure = error; self.finishReconciliation()
             } else if self.registration == 1 {
                 self.preferences.set(true, forKey: "scannerClientIdentityV2")
+                self.preferences.set(self.registrationIdentity, forKey: "scannerRegisteredAppBuild")
                 self.validateAccess()
             }
             else {

@@ -327,8 +327,21 @@ final class Model: ObservableObject {
         return true
     }
     var spotlightEnabled: Bool { trackedRoots.contains { $0.path == spotlightPath } }
+    var onStartupAccessNeeded: (() -> Void)?
     func startFolderMonitoring() {
-        folderAccess.synchronize(trackedRoots, checkingAccess: true) { [weak self] in self?.scanMissingRoots() }
+        let roots = trackedRoots
+        status = "Checking enabled folders…"
+        folderAccess.synchronize(roots, checkingAccess: true) { [weak self] in
+            guard let self else { return }
+            let blocked = roots.filter { self.folderAccess.requirements[$0.path] != nil }
+            if !blocked.isEmpty {
+                self.status = self.completionStatus(for: blocked, started: false)
+                self.onStartupAccessNeeded?()
+            }
+            // Preparation already checked all enabled roots, even recent readings.
+            // Do not re-register or prompt again through the startup scan path.
+            self.scanMissingRoots(requestAccess: false)
+        }
     }
     func setCacheEnabled(_ root: Root, _ enabled: Bool) {
         if !enabled { stopTracking(root.path); return }
@@ -339,13 +352,13 @@ final class Model: ObservableObject {
     func scanAllFolders(requestAccess: Bool = true) {
         scan(trackedRoots, requestAccess: requestAccess)
     }
-    func scanMissingRoots() {
+    func scanMissingRoots(requestAccess: Bool = true) {
         let roots = trackedRoots
         let missing = roots.filter { root in
             guard let reading = readings[root.path] else { return true }
             return Date().timeIntervalSince(reading.date) >= TimeInterval(folderInterval)
         }
-        if !missing.isEmpty { scan(missing, requestAccess: true) }
+        if !missing.isEmpty { scan(missing, requestAccess: requestAccess) }
     }
     func scanState(_ path: String) -> FolderScanState {
         guard scanning else { return .idle }
@@ -739,21 +752,6 @@ struct FolderRow: View {
             if let activity = model.folderAccess.activity(for: root) {
                 Text(activity).font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
             }
-            if let requirement = model.folderAccess.requirements[root.path] {
-                switch requirement {
-                case .fileAccess:
-                    HStack {
-                        Text("Protected by macOS").help("Access was denied. This alone does not mean Full Disk Access is missing.")
-                        Button("Privacy settings…") { model.folderAccess.openSettings(for: root) }
-                    }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
-                case .backgroundApproval:
-                    HStack {
-                        Text("Waiting for macOS approval")
-                        Button("Open System Settings…") { model.folderAccess.openSettings(for: root) }
-                    }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
-                case .failed: EmptyView()
-                }
-            }
             if model.expanded.contains(root.path) {
                 let children = model.children(root.path)
                 if children.isEmpty {
@@ -813,9 +811,18 @@ struct AlertPanel: View {
     var body: some View {
         let alerts = model.alerts
         let level = diskBadgeLevel(alerts)
-        if !alerts.isEmpty {
+        let permissions = model.folderAccess.permissionRequests
+        if !alerts.isEmpty || !permissions.isEmpty {
             VStack(alignment: .leading, spacing: 9) {
                 Label("NEEDS ATTENTION", systemImage: level==1 ? "questionmark.circle.fill" : "exclamationmark.circle.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(level==3 ? Palette.critical : level==2 ? Palette.warning : Palette.uncertainty)
+                ForEach(permissions) { root in
+                    let background = model.folderAccess.requirements[root.path] == .backgroundApproval
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Access required · " + root.title).font(.system(size: 12, weight: .semibold))
+                        Text(background ? "Allow Disk Monitor under Login Items & Extensions → Allow in the Background." : "macOS denied access. Review Full Disk Access for Disk Monitor, then return here to recheck. Some system restrictions may still apply.").font(.system(size: 10)).foregroundStyle(Palette.secondary)
+                        Button(background ? "Open background approval…" : "Open Full Disk Access…") { model.folderAccess.openSettings(for: root) }
+                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
+                }
                 ForEach(alerts) { alert in
                     Button {
                         if let path = alert.path { model.reveal(path) }
@@ -1120,6 +1127,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             ])
         }
         model.onStatus = { [weak self] in self?.updateStatusIcon() }
+        model.onStartupAccessNeeded = { [weak self] in
+            guard let self, !self.popover.isShown else { return }
+            self.toggle()
+        }
         updateStatusIcon()
         popover.contentSize = NSSize(width: 440, height: 690); popover.behavior = .transient
         popover.delegate = self
@@ -1410,8 +1421,18 @@ if CommandLine.arguments.contains("--self-test") {
     var replies: [(BridgeMessage) -> Void] = []
     let reader = PrivilegedFolderReader(preferences: prefs, operation: { op, reply in ops.append(op); replies.append(reply) })
     prefs.set(true, forKey: "scannerClientIdentityV2")
+    prefs.set(PrivilegedFolderReader.currentRegistrationIdentity, forKey: "scannerRegisteredAppBuild")
     var check: FolderAccess.Check = .available
     let gate = FolderAccess(preferences: prefs, reader: reader, probe: { _ in check })
+    let cacheProbe = root.appendingPathComponent("access-fixture/Library/Caches")
+    let deniedCache = cacheProbe.appendingPathComponent("protected-child")
+    try fm.createDirectory(at:deniedCache,withIntermediateDirectories:true)
+    precondition(FolderAccess.checkDirectory(cacheProbe.path) == .available)
+    try fm.setAttributes([.posixPermissions:0],ofItemAtPath:deniedCache.path)
+    let deniedCheck = FolderAccess.checkDirectory(cacheProbe.path)
+    try fm.setAttributes([.posixPermissions:0o700],ofItemAtPath:deniedCache.path)
+    precondition(deniedCheck == .permissionRequired, "Readable cache parent must not hide denied child access")
+    precondition(FolderAccess.checkDirectory(cacheProbe.path) == .available)
     let ordinary = Root(path: root.appendingPathComponent("ordinary").path, title: "Ordinary")
     let protectedRoot = Root(path: indexPath, title: "Protected fixture")
     func drainUntil(_ complete: () -> Bool) {
@@ -1531,6 +1552,40 @@ if CommandLine.arguments.contains("--self-test") {
     drainUntil { startupChecked }
     precondition(gate.requirements[ordinary.path] == .fileAccess)
     gate.cancelPending()
+    // A new app build renews registration once; unchanged builds only check access.
+    var upgradeOps: [String] = []
+    var upgradeReplies: [(BridgeMessage) -> Void] = []
+    let upgradedReader = PrivilegedFolderReader(preferences:prefs,registrationIdentity:"fixture-new-build",operation:{ op, reply in upgradeOps.append(op); upgradeReplies.append(reply) })
+    upgradedReader.setEnabled(true)
+    upgradeReplies.removeFirst()(BridgeMessage(event:"status",status:1))
+    precondition(upgradeOps.last == "unregister")
+    upgradeReplies.removeFirst()(BridgeMessage(event:"status",status:0))
+    precondition(upgradeOps.last == "register")
+    upgradeReplies.removeFirst()(BridgeMessage(event:"status",status:2))
+    precondition(prefs.string(forKey:"scannerRegisteredAppBuild") == "fixture-new-build")
+    upgradedReader.setEnabled(true)
+    upgradeReplies.removeFirst()(BridgeMessage(event:"status",status:1))
+    precondition(upgradeOps.last == "check")
+    upgradeReplies.removeFirst()(BridgeMessage(event:"launchFailed",error:"Scanner connection timed out"))
+    precondition(upgradeOps.filter { $0 == "unregister" }.count == 1, "A timeout does not trigger a registration loop")
+    precondition(upgradedReader.failure == "Scanner connection timed out")
+    prefs.set(PrivilegedFolderReader.currentRegistrationIdentity,forKey:"scannerRegisteredAppBuild")
+    // Startup surfaces denied access even when the saved reading is recent.
+    let startupModel = Model(nixStorePath:root.appendingPathComponent("absent-startup-nix").path,home:root.path,preferences:prefs,saveURL:root.appendingPathComponent("startup-state.json"),spotlightPath:root.appendingPathComponent("absent-startup-index").path)
+    startupModel.extras = [ordinary]
+    startupModel.folderAccess = gate
+    startupModel.readings[ordinary.path] = Reading(bytes:100,date:Date())
+    var shown = 0
+    startupModel.onStartupAccessNeeded = { shown += 1 }
+    check = .permissionRequired
+    startupModel.startFolderMonitoring()
+    replies.removeFirst()(BridgeMessage(event:"status",status:3))
+    drainUntil { shown == 1 }
+    precondition(gate.permissionRequests.map(\.path) == [ordinary.path])
+    precondition(!startupModel.scanning && startupModel.status == "Folder access required · saved sizes kept")
+    gate.cancel(ordinary.path)
+    precondition(gate.permissionRequests.isEmpty)
+    startupModel.timer?.invalidate(); startupModel.folderTimer?.invalidate()
     let configured = Model(nixStorePath: root.appendingPathComponent("absent-nix-store").path, preferences: prefs, saveURL: root.appendingPathComponent("state/readings.json"), spotlightPath: root.appendingPathComponent("spotlight-fixture").path)
     precondition(configured.diskInterval == 30 && configured.folderInterval == 300)
     precondition(configured.spaceThresholds.critical == 10 && configured.spaceThresholds.warning == 20)

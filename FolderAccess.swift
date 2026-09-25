@@ -21,6 +21,9 @@ final class FolderAccess {
     private var activationObserver: NSObjectProtocol?
     var onGranted: (([Root]) -> Void)?
     var onChange: (() -> Void)?
+    var permissionRequests: [Root] {
+        pending.values.filter { requirements[$0.path] == .fileAccess || requirements[$0.path] == .backgroundApproval }.sorted { $0.title < $1.title }
+    }
     var uncertain: Bool { reader.uncertain }
     var busy: Bool { reader.busy }
     func activity(for root: Root) -> String? { PrivilegedFolderReader.supports(root.path) ? reader.activity : nil }
@@ -40,16 +43,45 @@ final class FolderAccess {
     }
     deinit { if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) } }
     static func checkDirectory(_ path: String) -> Check {
-        guard let directory = opendir(path) else {
+        func readable(_ directoryPath: String) -> Check {
+            guard let directory = opendir(directoryPath) else {
+                let code = errno
+                return code == EACCES || code == EPERM ? .permissionRequired : .failed(String(cString: strerror(code)))
+            }
+            defer { closedir(directory) }
+            errno = 0
+            _ = readdir(directory)
             let code = errno
-            return code == EACCES || code == EPERM ? .permissionRequired : .failed(String(cString: strerror(code)))
+            if code != 0 { return code == EACCES || code == EPERM ? .permissionRequired : .failed(String(cString: strerror(code))) }
+            return .available
         }
-        closedir(directory); return .available
+        let root = readable(path)
+        guard root == .available else { return root }
+        // Library/Caches itself can be readable while protected cache directories
+        // beneath it are not. Probe immediate directories, without walking their trees.
+        if path.hasSuffix("/Library/Caches") {
+            do {
+                let children = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath:path), includingPropertiesForKeys:[.isDirectoryKey,.isSymbolicLinkKey])
+                for child in children {
+                    let values = try child.resourceValues(forKeys:[.isDirectoryKey,.isSymbolicLinkKey])
+                    if values.isDirectory == true && values.isSymbolicLink != true {
+                        let check = readable(child.path)
+                        if check != .available { return check }
+                    }
+                }
+            } catch {
+                let failure = error as NSError
+                if failure.domain == NSCocoaErrorDomain && failure.code == NSFileReadNoPermissionError { return .permissionRequired }
+                return .failed(error.localizedDescription)
+            }
+        }
+        return .available
     }
     /// Startup and tracking changes reconcile resource ownership, not a second toggle.
     func synchronize(_ roots: [Root], checkingAccess: Bool = false, completion: @escaping () -> Void = {}) {
+        if checkingAccess { for root in roots where !PrivilegedFolderReader.supports(root.path) { cancel(root.path) } }
         reader.setEnabled(roots.contains { PrivilegedFolderReader.supports($0.path) }) {
-            self.prepare(checkingAccess ? roots : roots.filter { PrivilegedFolderReader.supports($0.path) }, requestIfNeeded: checkingAccess) { _ in completion() }
+            self.prepare(checkingAccess ? roots : roots.filter { PrivilegedFolderReader.supports($0.path) }, requestIfNeeded: false) { _ in completion() }
         }
     }
     func cancel(_ path: String) { failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }

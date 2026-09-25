@@ -243,8 +243,8 @@ refresh use the same gate. There is no Spotlight-specific access controller or
 setup window.
 
 Ordinary filesystem access lets macOS display native consent prompts. A denial is
-shown on the folder row and preserves complete saved measurements. EPERM does not
-prove Full Disk Access is missing. The row can open System Settings when the user
+shown in Needs Attention and preserves complete saved measurements. EPERM does not
+prove Full Disk Access is missing. The permission action can open System Settings when the user
 chooses; the app never imitates a macOS permission dialog or opens an unsolicited
 Full Disk Access window. Returning from Settings rechecks pending folders through
 the same gate and resumes them in the single scan slot.
@@ -318,3 +318,26 @@ manufacturing “No change”; failures keep the complete bytes/date/previous va
 Switching between ordinary and administrator measurements starts a new baseline.
 Existing Reading fields persist this history in readings.json, with no schema or
 storage-location change. Restarting/upgrading keeps that file and preferences.
+
+## Startup access preflight
+
+Every startup checks enabled roots independently of saved reading age. The normal
+popup opens if a root is blocked; existing Needs Attention shows permission actions
+for all pending roots, including manually requested children. No separate setup
+window or second enable switch is added. Startup reuses its check results instead
+of immediately retrying interactive registration through the scan path.
+
+Library/Caches preflight opens its immediate nonsymlink child directories and reads
+one directory entry, because the parent alone may be readable. This runs on the
+utility queue and does not recursively walk caches or measure their sizes. Deeper
+restrictions can still be discovered during scanning. There is no supported public
+API for reading the Full Disk Access checkbox; actual denied access offers Settings,
+without treating every restriction as a missing grant. Background approval uses
+SMAppService status. Native macOS prompts may occur during the startup reads.
+
+The privileged reader records the app path and CFBundleVersion after successful
+registration or a requiresApproval result. A changed identity renews this app's
+registration once before access validation, respecting owned-scan cancellation and
+unknown-completion guards. This covers signed release upgrades and moved apps;
+unchanged local rebuild version/path does not establish a changed identity. A
+connection timeout alone never triggers an unregister/register retry loop.
