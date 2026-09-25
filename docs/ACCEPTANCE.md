@@ -353,3 +353,9 @@ No separate repair, registration or verification buttons should appear.
   request one measurement. Do not mark this passed based on fixture results.
 - Recheck startup with revoked approval using the existing permission flow; no new
   setup window or extra enable switch should appear.
+
+GitHub's macOS runners currently report SIP disabled and execute even the deliberate
+wrong-hash case. The test reports kernel rejection as SKIP on that exact condition,
+never as a pass. Matching launch and missing/stale package checks still run. On a
+SIP-enabled Mac, wrong-hash execution always fails the test; it passed locally with
+the installed build 59 scanner. CI cannot replace that security acceptance.
