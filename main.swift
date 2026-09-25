@@ -351,7 +351,12 @@ final class Model: ObservableObject {
         return .idle
     }
     @Published var protectedPaths: Set<String> = []
+    func measurementError(_ path: String) -> String? {
+        if case .failed(let reason) = folderAccess.requirements[path] { return reason }
+        return errors[path]
+    }
     func isProtected(_ path: String) -> Bool {
+        if case .failed = folderAccess.requirements[path] { return false }
         if errors[path] != nil { return protectedPaths.contains(path) }
         return readings[path]?.protectedOnly == true
     }
@@ -360,7 +365,7 @@ final class Model: ObservableObject {
         if let active = activePath, path == active || path.hasPrefix(active + "/") { return "Scanning…" }
         if queuedPaths.contains(path) { return "Queued…" }
         if isProtected(path) { return "Protected by macOS" }
-        return errors[path] == nil ? "Not scanned" : "Unreadable"
+        return measurementError(path) == nil ? "Not scanned" : "Unreadable"
     }
     private var checkingGrowthPaths = false
     func refreshMissingGrowthPaths() {
@@ -401,7 +406,7 @@ final class Model: ObservableObject {
         if let alert = diskSpaceAlert(free: free, capacity: capacity, thresholds: spaceThresholds) { result.append(alert) }
         let roots = trackedRoots
         for root in roots {
-            let error = errors[root.path]
+            let error = measurementError(root.path)
             if !isProtected(root.path) && ((error != nil && error != "Cancelled") || readings[root.path]?.incomplete == true) {
                 result.append(DiskAlert(id: "scan:" + root.path, critical: false, title: "Incomplete scan · " + root.title, detail: error ?? readings[root.path]?.scanError ?? "Some contents could not be measured. Rescan the folder for specific error details.", path: root.path, measurementIssue: true))
             }
@@ -665,7 +670,7 @@ struct FolderRow: View {
                 Image(systemName: depth == 0 ? "folder.fill" : "folder").foregroundStyle(depth == 0 ? Palette.accent : Palette.secondary)
                 Text(root.title).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 4)
-                if model.errors[root.path] != nil { Image(systemName: model.isProtected(root.path) ? "lock" : "exclamationmark.circle").foregroundStyle(model.isProtected(root.path) ? Palette.secondary : Palette.warning).help(model.errors[root.path]!) }
+                if let error = model.measurementError(root.path) { Image(systemName: model.isProtected(root.path) ? "lock" : "exclamationmark.circle").foregroundStyle(model.isProtected(root.path) ? Palette.secondary : Palette.warning).help(error) }
                 if let r = model.readings[root.path] {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text((r.incomplete == true ? "≥ " : "") + sizeText(r.bytes)).fontWeight(.medium).monospacedDigit()
@@ -702,17 +707,19 @@ struct FolderRow: View {
                 Text(activity).font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
             }
             if let requirement = model.folderAccess.requirements[root.path] {
-                HStack {
-                    switch requirement {
-                    case .fileAccess:
+                switch requirement {
+                case .fileAccess:
+                    HStack {
                         Text("Protected by macOS").help("Access was denied. This alone does not mean Full Disk Access is missing.")
                         Button("Privacy settings…") { model.folderAccess.openSettings(for: root) }
-                    case .backgroundApproval:
+                    }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
+                case .backgroundApproval:
+                    HStack {
                         Text("Waiting for macOS approval")
                         Button("Open System Settings…") { model.folderAccess.openSettings(for: root) }
-                    case .failed(let reason): Text("Cannot scan folder").help(reason)
-                    }
-                }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
+                    }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 12)
+                case .failed: EmptyView()
+                }
             }
             if model.expanded.contains(root.path) {
                 let children = model.children(root.path)
@@ -1382,6 +1389,38 @@ if CommandLine.arguments.contains("--self-test") {
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(allowed!.count == 1 && gate.requirements[ordinary.path] == nil)
+    // Access-check failures use the same row diagnostic and tracked-root alert.
+    let warningModel = Model(nixStorePath: root.appendingPathComponent("absent-nix-warning").path, home: root.path, preferences: prefs, saveURL: root.appendingPathComponent("warning-state.json"), spotlightPath: indexPath)
+    warningModel.folderAccess = gate
+    warningModel.extras = [ordinary]
+    warningModel.capacity = 1000 * gib; warningModel.free = 400 * gib
+    let savedDate = Date(timeIntervalSince1970: 100)
+    warningModel.readings[ordinary.path] = Reading(bytes: 48 * gib, previous: nil, date: savedDate, administratorMeasured: true)
+    check = .failed("Reader could not start"); allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    precondition(warningModel.measurementError(ordinary.path) == "Reader could not start")
+    precondition(warningModel.alerts.filter { $0.id == "scan:" + ordinary.path }.count == 1)
+    precondition(warningModel.alerts.first { $0.id == "scan:" + ordinary.path }?.detail == "Reader could not start")
+    precondition(diskBadgeLevel(warningModel.alerts) == 1)
+    precondition(warningModel.readings[ordinary.path]?.bytes == 48 * gib && warningModel.readings[ordinary.path]?.date == savedDate)
+    warningModel.protectedPaths.insert(ordinary.path)
+    warningModel.errors[ordinary.path] = "Permission denied"
+    precondition(!warningModel.isProtected(ordinary.path), "An unexpected access failure must not be hidden by an older permission denial")
+    warningModel.errors[ordinary.path] = "Earlier I/O failure"
+    warningModel.protectedPaths.remove(ordinary.path)
+    check = .available; allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    precondition(warningModel.measurementError(ordinary.path) == "Earlier I/O failure", "Access recovery must not erase an independent scan error")
+    warningModel.errors.removeValue(forKey: ordinary.path)
+    precondition(warningModel.alerts.isEmpty && warningModel.measurementError(ordinary.path) == nil)
+    check = .permissionRequired; allowed = nil
+    gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
+    drainUntil { allowed != nil }
+    precondition(warningModel.alerts.isEmpty, "Pending permission is not an unexpected measurement failure")
+    gate.cancel(ordinary.path)
+    check = .available
     allowed = nil
     gate.prepare([protectedRoot], requestIfNeeded: true) { allowed = $0 }
     replies.removeFirst()(BridgeMessage(event: "status", status: 3))

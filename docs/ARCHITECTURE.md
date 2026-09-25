@@ -286,3 +286,9 @@ can be reported again. Legacy readings decode without the optional field. A late
 validation result cannot overwrite a newer reading. No monitored file is changed.
 Fixture checks cover deletion, retained history, restart, recreation and error
 classification; live UI behavior remains a separate manual acceptance check.
+
+Access-check failures feed `Model.measurementError` alongside scan errors. Folder
+rows and tracked-root alerts use this same diagnostic, preserving saved bytes and
+dates. A recovered access check clears only its own failure; independent scan errors
+remain until measurement resolves them. Permission approval states retain their
+existing Settings actions and do not by themselves create measurement warnings.

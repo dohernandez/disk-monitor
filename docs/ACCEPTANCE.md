@@ -250,3 +250,12 @@ No separate repair, registration or verification buttons should appear.
   store is scanned by these tests.
 - Manual UI acceptance: verify size/date, row refresh, expansion and the Settings
   toggle. Sizes represent measured usage, not cleanup estimates.
+
+## Access failure warnings
+
+- A failed folder access check uses the existing row warning icon and tracked-root
+  Needs Attention entry, with the actual reason. No separate “Cannot scan folder”
+  line appears below the row. Saved complete bytes and date remain unchanged.
+- Recovery clears the access failure without erasing an independent scan error.
+- Pending permission approval alone does not create a yellow badge. Existing
+  Settings actions remain available. Check row layout manually after installation.
