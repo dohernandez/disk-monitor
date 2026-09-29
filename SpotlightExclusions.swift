@@ -453,11 +453,85 @@ enum SpotlightExclusionHarness {
             editor.controls.mutationScope = environment.root
             editor.show(model: environment.model)
             editor.window?.title = "Disk Monitor — Spotlight exclusions (test mode)"
+            guard CommandLine.arguments.contains(scenarioFlag) else { return }
+            let root = environment.root
+            DispatchQueue.global(qos: .userInitiated).async {
+                runScenarios(root: root, log: resultsURL)
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            }
         }
         func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
         func applicationWillTerminate(_ notification: Notification) {
+            stop.lock(); stopping = true; stop.unlock()
             SpotlightExclusionWindow.shared.controls.cancel(); environment.cleanup()
         }
+    }
+    // Headless live run: each step goes through the same verified automation as the
+    // window. Only fixture paths are touched; any fixture left excluded is removed at the end.
+    static let scenarioFlag = "--run-scenarios"
+    static var resultsURL: URL { FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-results.log") }
+    private static let stop = NSLock()
+    private static var stopping = false
+    private static func stopped() -> Bool { stop.lock(); defer { stop.unlock() }; return stopping }
+    static func runScenarios(root: String, log url: URL) {
+        FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        let handle = try? FileHandle(forWritingTo: url)
+        defer { try? handle?.close() }
+        func write(_ line: String) { handle?.write(Data((ISO8601DateFormatter().string(from: Date()) + " " + line + "\n").utf8)); print(line) }
+        let info = ProcessInfo.processInfo.operatingSystemVersionString
+        write("START macOS \(info) locale \(Locale.current.identifier) trusted=\(AXIsProcessTrusted()) root=\(root)")
+        func automation() -> SpotlightPrivacyAutomation { SpotlightPrivacyAutomation(cancelled: stopped) }
+        func fixture(_ name: String) -> String { root + "/" + name }
+        guard AXIsProcessTrusted() else {
+            do { _ = try automation().run(); write("FAIL denied: read succeeded without Accessibility") }
+            catch { write("PASS denied: \(error.localizedDescription)") }
+            write("END denied-only"); return
+        }
+        var initial: SpotlightPrivacySnapshot
+        do { initial = try automation().run(); write("PASS read: \(initial.paths.count) existing exclusions") }
+        catch { write("FAIL read: \(error.localizedDescription)"); write("END"); return }
+        guard initial.paths.allSatisfy({ !$0.hasPrefix(root + "/") }) else {
+            write("FAIL precondition: fixtures already excluded; remove them first"); write("END"); return
+        }
+        var current = initial, failures = 0
+        func step(_ name: String, _ path: String, excluded: Bool, blocked: Bool = false, check: (SpotlightPrivacySnapshot) -> Bool = { _ in true }) {
+            guard failures == 0, !stopped() else { return }
+            guard path.hasPrefix(root + "/") else { failures += 1; write("FAIL \(name): outside fixtures"); return }
+            do {
+                let value = try automation().run(path: path, excluded: excluded)
+                let ok = !blocked && (value.covering(path) != nil) == excluded && check(value)
+                write((ok ? "PASS " : "FAIL ") + name + ": \(value.paths.subtracting(initial.paths).sorted())")
+                if !ok { failures += 1 }; current = value
+            } catch {
+                write((blocked ? "PASS " : "FAIL ") + name + ": " + error.localizedDescription)
+                if !blocked { failures += 1 }
+            }
+        }
+        let spaces = fixture("folder with spaces"), a = fixture("duplicate-a/Cache"), b = fixture("duplicate-b/Cache")
+        let unicode = fixture("Ünïcødé 文件夹"), parent = fixture("excluded-parent"), child = fixture("excluded-parent/child")
+        step("add spaces", spaces, excluded: true)
+        step("add duplicate-a/Cache only", a, excluded: true) { $0.covering(b) == nil }
+        step("remove duplicate-a/Cache", a, excluded: false) { $0.covering(b) == nil }
+        step("add unicode", unicode, excluded: true)
+        step("remove unicode", unicode, excluded: false)
+        step("add parent", parent, excluded: true)
+        let beforeChild = current.paths
+        step("child already covered: no change", child, excluded: true) { $0.paths == beforeChild }
+        step("remove child blocked by parent", child, excluded: false, blocked: true)
+        step("remove parent", parent, excluded: false)
+        step("remove spaces", spaces, excluded: false)
+        // Restore: remove only fixture entries that are still excluded, whatever failed above.
+        do {
+            var final = try automation().run()
+            for path in final.paths.filter({ $0.hasPrefix(root + "/") }).sorted(by: { $0.count > $1.count }) where !stopped() {
+                do { final = try automation().run(path: path, excluded: false); write("CLEANUP removed \(path)") }
+                catch { write("CLEANUP FAILED \(path): \(error.localizedDescription)") }
+            }
+            let restored = final.paths == initial.paths
+            write((restored ? "PASS" : "FAIL") + " final list equals initial list")
+            if !restored { failures += 1 }
+        } catch { write("FAIL final read: \(error.localizedDescription)"); failures += 1 }
+        write("END failures=\(failures)")
     }
     static func run() -> Never {
         let app = NSApplication.shared
@@ -473,6 +547,13 @@ enum SpotlightExclusionHarness {
     }
     static func selfTest() throws {
         precondition(requested(["DiskMonitor", flag]) && !requested(["DiskMonitor", "--show"]))
+        let deniedLog = FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-harness-log-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: deniedLog) }
+        if !AXIsProcessTrusted() {
+            runScenarios(root: "/nonexistent-fixtures", log: deniedLog)
+            let text = (try? String(contentsOf: deniedLog, encoding: .utf8)) ?? ""
+            precondition(text.contains("PASS denied") && !text.contains("FAIL"), "Without Accessibility the run stops before any change")
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-harness-test-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let environment = try prepare(root: root)

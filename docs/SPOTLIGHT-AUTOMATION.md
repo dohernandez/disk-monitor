@@ -48,6 +48,18 @@ Fixture folders are kept between runs so a leftover exclusion can be removed
 next time. Quitting mid-operation can leave the Settings sheet open; refresh on
 the next run. Accessibility is still granted to the tested build by the user.
 
+Add `--run-scenarios` to run the live checks headlessly through the same verified
+automation: read, add/remove with spaces, one of two duplicate `Cache` basenames,
+Unicode, parent coverage (child add is a no-op, child removal is blocked), then
+restore. Any fixture left excluded is removed and the final list must equal the
+initial list. Results go to `$TMPDIR/DiskMonitor-exclusion-results.log`; the app
+quits when done. Without Accessibility it records the denial and changes nothing.
+Launch with `open -n` so macOS attributes Accessibility to the test build itself,
+not to the terminal that started it. The permission row is keyed to the app ID and
+its signature: an ad-hoc test build does not match a row created for a
+certificate-signed build, so that row must be removed before the test build can
+register its own.
+
 ## Release gate: live validation still required
 
 This is an unverified automation candidate, not a demonstrated working integration.

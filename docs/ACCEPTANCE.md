@@ -414,6 +414,7 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
   no timers, scans, tracked roots or readings file; isolated preference suite removed
   on cleanup; changes outside the fixture folder are refused before automation;
   a linked fixture location is refused.
+- Without Accessibility, `--run-scenarios` records the denial before opening Settings.
 
 ## Fixed protected-folder access status
 
