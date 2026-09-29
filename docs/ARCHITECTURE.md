@@ -440,7 +440,8 @@ requests are used. Scan/access behavior and tracking checkboxes remain independe
 
 `FolderAccess` records in-memory observations for the privileged reader, Library
 caches and folders that encounter a permission requirement. Existing preflight
-and result callbacks update these observations; no extra checks or scans run.
+and result callbacks update these observations. Pending access has a separate
+lightweight recheck timer, described below.
 `PrivilegedFolderReader.measure(onStarted:completion:)` exposes the existing bridge
 `measuring` event once per request. That event means connected/request dispatched,
 not proof of a successful filesystem traversal. Only a returned root value without
@@ -453,3 +454,21 @@ Observations are filtered to tracked roots/descendants. Request cancellation kee
 unconfirmed evidence visible; a new app instance starts without verified evidence.
 No observation is persisted and none controls registration, permission requests,
 scan resumption, timers or cancellation.
+
+### Pending-access refresh and banner dismissal
+
+`verifiedPaths` suppresses a folder's banner after its first complete scan for this
+process lifetime, including routine subsequent checks/scans. A new failure clears
+that suppression. Pending warnings for other folders remain visible. Cancellation
+preserves existing verification but cannot verify an unfinished operation; uncertain
+reader completion always overrides suppression. Disabling tracking clears its state.
+
+`FolderAccess` owns a five-second timer only while non-background access requests
+are pending. It uses normal directory probes and `PrivilegedFolderReader.recheckAccess`
+(status plus access check only). No periodic registration, unregister, measurement
+or restart is performed. The existing one-second background-approval polling remains.
+A single-flight guard skips concurrent preflight/reader work; cancellation revisions
+and pending membership reject stale results. Real grants resume once through the
+existing onGranted/Model queue. The timer stops with no pending requests and pauses
+for busy or uncertain readers. Persistent failure retains conditional quit/reopen
+advice; enabled registration is never treated as evidence of Full Disk Access.

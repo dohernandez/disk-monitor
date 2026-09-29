@@ -49,9 +49,11 @@ final class FolderAccess {
     }
     // Current-session evidence only. Saved sizes and macOS toggle state cannot prove access.
     private var observations: [String: Observation] = [:]
+    private var verifiedPaths: Set<String> = []
     func accessObservations(for roots: [Root]) -> [Observation] {
         observations.values.filter { observation in
-            roots.contains { observation.id == $0.path || observation.id.hasPrefix($0.path + "/") }
+            (!verifiedPaths.contains(observation.id) || (PrivilegedFolderReader.supports(observation.id) && reader.uncertain))
+                && roots.contains { observation.id == $0.path || observation.id.hasPrefix($0.path + "/") }
         }.map { observation in
             if PrivilegedFolderReader.supports(observation.id), reader.uncertain {
                 return Observation(root: observation.root, activity: .attention("Scanner connection or completion is unconfirmed. Restart your Mac before retrying."))
@@ -65,6 +67,8 @@ final class FolderAccess {
         guard protected || observations[root.path] != nil || PrivilegedFolderReader.supports(root.path)
                 || root.path.hasSuffix("/Library/Caches") else { return }
         observations[root.path] = Observation(root: root, activity: activity)
+        if case .verified = activity { verifiedPaths.insert(root.path) }
+        if case .attention = activity { verifiedPaths.remove(root.path) }
         onChange?()
     }
     struct Result {
@@ -76,6 +80,10 @@ final class FolderAccess {
     private let probe: (String) -> Check
     private var pending: [String: Root] = [:]
     private var revisions: [String: Int] = [:]
+    static let accessRecheckInterval: TimeInterval = 5
+    private var accessTimer: Timer?
+    private var recheckingAccess = false
+    private var preparing = 0
     private(set) var failedBeforeScan: Set<String> = []
     private(set) var requirements: [String: Requirement] = [:]
     private var waitingForSettings = false
@@ -120,12 +128,62 @@ final class FolderAccess {
             for root in ready { self.pending.removeValue(forKey: root.path); self.requirements.removeValue(forKey: root.path); self.failedBeforeScan.remove(root.path); self.fullDiskAccessReviewPaths.remove(root.path) }
             for root in ready { self.observe(root, .ready) }
             if !ready.isEmpty { self.onGranted?(Array(ready)) }
+            self.updateAccessTimer()
             self.onChange?()
         }
-        self.reader.onChange = { [weak self] in self?.onChange?() }
+        self.reader.onChange = { [weak self] in
+            guard let self else { return }
+            // Background approval may change independently of our Settings button.
+            // Publish the next actual requirement once the reader's check finishes.
+            if !self.reader.reconciling, !self.reader.busy {
+                for root in self.pending.values.filter({ PrivilegedFolderReader.supports($0.path) }) {
+                    if let requirement = self.privilegedRequirement() {
+                        self.requirements[root.path] = requirement
+                        if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
+                        else { self.failedBeforeScan.remove(root.path) }
+                        self.observeRequirement(root, requirement)
+                    }
+                }
+            }
+            self.updateAccessTimer(); self.onChange?()
+        }
         activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.returnedFromSettings() }
     }
-    deinit { if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) } }
+    deinit { accessTimer?.invalidate(); if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) } }
+    private func updateAccessTimer() {
+        // Background approval already has the reader's one-second status poll.
+        let needed = !reader.uncertain && pending.keys.contains { requirements[$0] != .backgroundApproval }
+        if !needed { accessTimer?.invalidate(); accessTimer = nil; return }
+        guard accessTimer == nil else { return }
+        let timer = Timer(timeInterval: Self.accessRecheckInterval, repeats: true) { [weak self] _ in self?.recheckPendingAccess() }
+        accessTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    func recheckPendingAccess() {
+        guard !recheckingAccess, preparing == 0, !reader.busy, !reader.uncertain else { return }
+        let roots = pending.values.filter { requirements[$0.path] != .backgroundApproval }
+        guard !roots.isEmpty else { updateAccessTimer(); return }
+        recheckingAccess = true
+        let tokens = revisions
+        let ordinary = roots.filter { !PrivilegedFolderReader.supports($0.path) }
+        prepare(ordinary, requestIfNeeded: true, recheckOnly: true) { [weak self] allowed in
+            guard let self else { return }
+            if !allowed.isEmpty { self.onGranted?(allowed) }
+            let privileged = roots.filter { PrivilegedFolderReader.supports($0.path) && self.pending[$0.path] != nil && self.revisions[$0.path] == tokens[$0.path] }
+            func finish() { self.recheckingAccess = false; self.updateAccessTimer(); self.onChange?() }
+            guard !privileged.isEmpty else { finish(); return }
+            self.reader.recheckAccess {
+                for root in privileged where self.pending[root.path] != nil && self.revisions[root.path] == tokens[root.path] {
+                    let requirement = self.privilegedRequirement()
+                    self.requirements[root.path] = requirement
+                    if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
+                    else { self.failedBeforeScan.remove(root.path) }
+                    self.observeRequirement(root, requirement)
+                }
+                finish()
+            }
+        }
+    }
     static func checkDirectory(_ path: String) -> Check {
         func readable(_ directoryPath: String) -> Check {
             guard let directory = opendir(directoryPath) else {
@@ -169,9 +227,10 @@ final class FolderAccess {
             self.prepare(checkingAccess ? roots : roots.filter { PrivilegedFolderReader.supports($0.path) }, requestIfNeeded: false) { _ in completion() }
         }
     }
-    func cancel(_ path: String) { observations.removeValue(forKey: path); fullDiskAccessReviewPaths.remove(path); failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }
+    func cancel(_ path: String) { verifiedPaths.remove(path); observations.removeValue(forKey: path); fullDiskAccessReviewPaths.remove(path); failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path); updateAccessTimer() }
     func cancelPending() {
         let previous = observations
+        let verified = verifiedPaths
         for path in Array(revisions.keys) { cancel(path) }; pending.removeAll()
         // Cancelling requests cannot turn an unconfirmed operation into successful access.
         // Keep its evidence visible; untracked roots are filtered at presentation time.
@@ -181,23 +240,26 @@ final class FolderAccess {
             default: return observation
             }
         }
+        verifiedPaths = verified
         onChange?()
     }
     func cancelMeasurement() { reader.cancel() }
-    func prepare(_ roots: [Root], requestIfNeeded: Bool, onChecking: @escaping (Root) -> Void = { _ in }, completion: @escaping ([Root]) -> Void) {
+    func prepare(_ roots: [Root], requestIfNeeded: Bool, recheckOnly: Bool = false, onChecking: @escaping (Root) -> Void = { _ in }, completion: @escaping ([Root]) -> Void) {
+        preparing += 1
         var allowed: [Root] = []
         let tokens = Dictionary(roots.map { root in
             if revisions[root.path] == nil { revisions[root.path] = 0 }
             return (root.path, revisions[root.path]!)
         }, uniquingKeysWith: { first, _ in first })
         func next(_ index: Int) {
-            guard index < roots.count else { self.onChange?(); completion(allowed); return }
+            guard index < roots.count else { self.preparing -= 1; self.updateAccessTimer(); self.onChange?(); completion(allowed); return }
             let root = roots[index]
             guard self.revisions[root.path] == tokens[root.path] else { next(index + 1); return }
             onChecking(root)
-            if PrivilegedFolderReader.supports(root.path) || requestIfNeeded || self.pending[root.path] == nil { self.observe(root, .checking) }
+            if !recheckOnly && (PrivilegedFolderReader.supports(root.path) || requestIfNeeded || self.pending[root.path] == nil) { self.observe(root, .checking) }
             func finish(_ requirement: Requirement?) {
                 guard self.revisions[root.path] == tokens[root.path] else { next(index + 1); return }
+                guard !recheckOnly || self.pending[root.path] != nil else { next(index + 1); return }
                 if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
                 else { self.failedBeforeScan.remove(root.path) }
                 if let requirement { self.requirements[root.path] = requirement; self.pending[root.path] = root }
@@ -234,6 +296,7 @@ final class FolderAccess {
         case .failed(let error): observe(root, .attention(error + " If permissions are enabled, quit and reopen Disk Monitor, then retry."))
         case nil: observe(root, .ready)
         }
+        updateAccessTimer()
     }
     private func privilegedRequirement() -> Requirement? {
         if reader.canAutomaticallyMeasure { return nil }
@@ -257,6 +320,7 @@ final class FolderAccess {
             reader.measure(onStarted: { [weak self] in self?.observe(root, .scanning) }) { value in
                 if value.error != nil, value.error != "Measurement cancelled", let requirement = self.privilegedRequirement() {
                     self.requirements[root.path] = requirement; self.pending[root.path] = root; self.onChange?()
+                    self.updateAccessTimer()
                 }
                 let error = value.error == "Measurement cancelled" ? "Cancelled" : value.error
                 finish(Result(scan: ScanResult(values: value.bytes.map { [root.path: $0] } ?? [:], error: error), date: value.finishedAt, elevated: true))
@@ -269,7 +333,7 @@ final class FolderAccess {
             }
         }
     }
-    func reportDenied(_ root: Root) { pending[root.path] = root; requirements[root.path] = .fileAccess; observeRequirement(root, .fileAccess); onChange?() }
+    func reportDenied(_ root: Root) { pending[root.path] = root; requirements[root.path] = .fileAccess; observeRequirement(root, .fileAccess); updateAccessTimer(); onChange?() }
     func openSettings(for root: Root) {
         willOpenSettings(fullDiskAccess: requirements[root.path] != .backgroundApproval)
         if requirements[root.path] == .backgroundApproval { SMAppService.openSystemSettingsLoginItems() }

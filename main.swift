@@ -1726,9 +1726,14 @@ if CommandLine.arguments.contains("--self-test") {
     let stamp = Date(timeIntervalSinceNow: -5)
     successfulReply(BridgeMessage(event: "result", measurement: Measurement(bytes: 1234, finishedAt: stamp)))
     precondition(elevated?.scan.values[indexPath] == 1234 && elevated?.date == stamp && elevated?.elevated == true)
-    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .verified(stamp))
+    precondition(gate.accessObservations(for: [protectedRoot]).isEmpty, "A successful first scan dismisses the banner")
     successfulReply(BridgeMessage(event: "measuring"))
-    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .verified(stamp), "Late replies must not restore a completed scan's spinner")
+    precondition(gate.accessObservations(for: [protectedRoot]).isEmpty, "Late replies must not restore a completed scan's banner")
+    allowed = nil
+    gate.prepare([protectedRoot], requestIfNeeded: false) { allowed = $0 }
+    precondition(allowed?.count == 1 && gate.accessObservations(for: [protectedRoot]).isEmpty, "Routine checks after success remain quiet")
+    gate.measure(protectedRoot, scanner: Scanner()) { _ in }
+    precondition(gate.accessObservations(for: [protectedRoot]).isEmpty, "Cached follow-up results remain quiet")
     gate.reportDenied(ordinary)
     precondition(gate.accessObservations(for: [protectedRoot, ordinary]).first?.id == ordinary.path, "One working folder must not hide another folder's access failure")
     gate.cancel(ordinary.path)
@@ -1814,7 +1819,8 @@ if CommandLine.arguments.contains("--self-test") {
     // suggestion is persisted or permission approval assumed across launches.
     do {
         var restartReplies: [(BridgeMessage) -> Void] = []
-        let freshReader = PrivilegedFolderReader(preferences: prefs, operation: { _, reply in restartReplies.append(reply) })
+        var restartOps: [String] = []
+        let freshReader = PrivilegedFolderReader(preferences: prefs, operation: { op, reply in restartOps.append(op); restartReplies.append(reply) })
         let freshGate = FolderAccess(preferences: prefs, reader: freshReader, probe: { _ in .available })
         precondition(freshGate.accessObservations(for: [protectedRoot]).isEmpty, "Access success is never restored from preferences")
         var checked = false
@@ -1826,6 +1832,45 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(freshReader.canAutomaticallyMeasure && freshGate.requirements.isEmpty)
         precondition(freshGate.accessObservations(for: [protectedRoot]).first?.activity == .ready)
         precondition(freshGate.restartGuidance(for: indexPath) == nil && freshGate.restartGuidance(for: ordinary.path) == nil)
+        // Grants made outside our Settings button are detected without restarting the app.
+        var recovered: [Root] = []
+        freshGate.onGranted = { recovered += $0 }
+        freshGate.reportDenied(ordinary)
+        let automaticRecheckDeadline = Date().addingTimeInterval(12)
+        while recovered.isEmpty && Date() < automaticRecheckDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        precondition(recovered.count == 1, "The access timer detects an external grant without a Settings-return event")
+        precondition(recovered[0].path == ordinary.path && freshGate.requirements[ordinary.path] == nil)
+        freshGate.recheckPendingAccess()
+        precondition(recovered.count == 1, "A grant resumes only once")
+        freshReader.needsAccess = true
+        freshGate.prepare([protectedRoot], requestIfNeeded: false) { _ in }
+        precondition(freshGate.requirements[indexPath] == .fileAccess)
+        let beforePoll = restartOps.count
+        freshGate.recheckPendingAccess()
+        freshGate.recheckPendingAccess()
+        precondition(restartOps.count == beforePoll + 1, "Only one recheck can be in flight")
+        restartReplies.removeFirst()(BridgeMessage(event: "status", status: 1))
+        restartReplies.removeFirst()(BridgeMessage(event: "launchFailed", error: "Scanner connection timed out"))
+        precondition(Array(restartOps.suffix(2)) == ["status", "check"], "Periodic probes never repair or register")
+        precondition(freshGate.accessObservations(for: [protectedRoot]).first?.activity.detail.contains("quit and reopen") == true)
+        precondition(recovered.count == 1, "An enabled switch and failed check must not resume a scan")
+        freshGate.recheckPendingAccess()
+        restartReplies.removeFirst()(BridgeMessage(event: "status", status: 1))
+        restartReplies.removeFirst()(BridgeMessage(event: "access", status: 0))
+        precondition(recovered.map(\.path) == [ordinary.path, indexPath] && freshGate.requirements.isEmpty)
+        let afterRecovery = restartOps.count
+        freshGate.recheckPendingAccess()
+        precondition(restartOps.count == afterRecovery && recovered.count == 2, "No polling or duplicate resumption after recovery")
+        precondition(FolderAccess.accessRecheckInterval == 5)
+        freshReader.setEnabled(true)
+        restartReplies.removeFirst()(BridgeMessage(event: "status", status: 2))
+        freshGate.prepare([protectedRoot], requestIfNeeded: false) { _ in }
+        precondition(freshGate.requirements[indexPath] == .backgroundApproval)
+        freshReader.setEnabled(true) // Existing background-approval poll observes approval.
+        restartReplies.removeFirst()(BridgeMessage(event: "status", status: 1))
+        restartReplies.removeFirst()(BridgeMessage(event: "access", status: 1))
+        precondition(freshGate.requirements[indexPath] == .fileAccess, "External approval must reveal the next permission without Settings return")
+        freshGate.cancelPending()
     }
     // A new uncached measurement is cancelled through the same folder owner.
     reader.setEnabled(false)

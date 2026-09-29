@@ -298,16 +298,25 @@ remain in Needs Attention.
   not yet responded. This is not shown as a healthy scan.
 - **Scan in progress**: the privileged reader has connected and received the scan
   request, or an ordinary scan was dispatched. The complete result is still pending.
-- **Scan succeeded · access verified**: a complete successful measurement was
-  returned during this app session. Its time and folder name are shown.
 - **Folder access needs attention**: access or measurement failed, or scanner
   completion is unconfirmed. The reason remains visible even when macOS displays
   enabled permission switches. An unconfirmed operation retains its existing Mac
   restart guidance.
 
-Failures take priority over successful folders; other observed folders have a
-compact summary with full text on hover. Cancelling a scan does not verify access.
-Old saved sizes never produce a success indication on launch. Startup, permission
-requests, scan timing, registration and recovery behavior are unchanged.
+After a folder's first complete successful scan, its status disappears. Routine
+checks and later scans remain quiet for that folder; a new failure brings the
+warning back. Other folders still waiting for access remain visible. Cancelling
+or returning an old saved size does not count as successful access verification.
+
+While access is pending, a lightweight check runs every five seconds, separately
+from folder-size scans. Background approval retains its existing one-second status
+poll. Checks do not overlap or repeatedly register the scanner, and stop once the
+pending access is resolved. A newly readable folder clears its request and resumes
+through the normal scan queue, including permissions granted outside the app's
+Settings button. Checks pause while the protected reader is busy or completion
+is unconfirmed. If access remains blocked despite enabled permission switches,
+quit and reopen Disk Monitor as suggested. The app cannot determine the Full Disk
+Access checkbox state or guarantee that a restart is necessary. No automatic
+restart or permission reset is performed.
 
 ![Protected-folder status examples](screenshots/access.png)

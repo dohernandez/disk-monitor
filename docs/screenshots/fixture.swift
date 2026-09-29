@@ -30,7 +30,7 @@ for (path, size) in sizes {model.readings[path] = Reading(bytes: size*gib, previ
 
 let accessPreview = CommandLine.arguments.contains("access")
 let accessRoot = Root(path: model.spotlightPath, title: "Spotlight index")
-let accessExamples: [FolderAccess.Activity] = [.checking, .connecting, .scanning, .verified(now),
+let accessExamples: [FolderAccess.Activity] = [.checking, .connecting, .scanning,
     .attention("Scanner connection timed out. If permissions are enabled, quit and reopen Disk Monitor, then retry.")]
 let exclusionsPreview = CommandLine.arguments.contains("exclusions")
 model.readings[model.nixStorePath] = Reading(bytes: 7*gib, date: now)
@@ -43,9 +43,9 @@ let content: AnyView = accessPreview ? AnyView(VStack(alignment: .leading, spaci
     }
     FolderAccessStatusPanel(observations: [
         FolderAccess.Observation(root: Root(path: "/Users/example/Library/Caches", title: "Library caches"), activity: .attention("Full Disk Access is required.")),
-        FolderAccess.Observation(root: accessRoot, activity: .verified(now))])
+        FolderAccess.Observation(root: accessRoot, activity: .scanning)])
     Spacer(minLength: 0)
-}.padding(.vertical, 20).frame(width: 440, height: 710).foregroundStyle(Palette.primary).background(Palette.background)) : exclusionsPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
+}.padding(.vertical, 20).frame(width: 440, height: 610).foregroundStyle(Palette.primary).background(Palette.background)) : exclusionsPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
     Text("Caches & tools").font(.headline)
     SpotlightExclusionSettings(model: model)
     Spacer(minLength: 0)
@@ -54,7 +54,7 @@ let content: AnyView = accessPreview ? AnyView(VStack(alignment: .leading, spaci
     FolderRow(model: model, root: Root(path: model.spotlightPath, title: "Spotlight index"))
 }.padding(16).frame(width: 440, height: 150).foregroundStyle(Palette.primary).background(Palette.background)) : AnyView(Dashboard(model: model))
 let view = NSHostingView(rootView: content.environment(\.controlActiveState, .active))
-view.frame = NSRect(x: 0, y: 0, width: 440, height: accessPreview ? 710 : exclusionsPreview ? 780 : spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
+view.frame = NSRect(x: 0, y: 0, width: 440, height: accessPreview ? 610 : exclusionsPreview ? 780 : spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
 let window = PreviewWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
 window.contentView = view
 window.appearance = NSAppearance(named: .darkAqua)
