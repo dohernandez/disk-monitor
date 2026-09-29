@@ -396,25 +396,20 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
 - Clicking the card or Show Update opens Sparkle’s existing prompt. Install on Quit keeps the reminder; Skip clears it. A newer version replaces the pending title. An automatic install-on-quit callback also exposes the reminder even without a dialog.
 - Verify background discovery, both badge types, download/install-on-quit, skip, relaunch and sleep/wake scheduling in the live app. Isolated tests verify reminder state and updater startup without contacting the feed or installing.
 
-## Spotlight exclusion suggestions
+## Spotlight exclusion controls
 
-- Fixtures verify portable detection of all eight non-index cache types, independence
-  from tracking toggles, exclusion of the Spotlight index, and omission of missing
-  built-ins even when they have saved readings.
-- Fixtures verify custom path normalization/deduplication, rejection of non-file URLs
-  and index paths, persistence through reload, missing-custom retention and removal.
-  Measurements and tracked roots must not change; no scan should start.
-- Open the disclosure under Caches & tools. Check wrapping in the 440-point popup,
-  path tooltips, and row action menus. App updates remains the last Settings section.
-- Manually check the Settings link on supported macOS versions (fall back to navigating
-  to Spotlight if needed), then Search Privacy / Spotlight Privacy. Verify a fixture
-  folder can be added through macOS's + button and by dragging the folder URL.
-- Check Add folder cancellation, multiple selections, Show in Finder and Copy path.
-  Custom selection must survive restart without appearing as a confirmed exclusion.
-- Remove from suggestions must only alter the app list; verify actual exclusion
-  changes are performed in macOS. Never use real cache exclusion or reindexing as a
-  fixture test. Native panel/drag/Settings integration remains manual acceptance;
-  offscreen rendering does not establish those interactions.
+- Keep portable candidate detection, custom preference compatibility and scan independence fixtures.
+- Snapshot fixtures must reject missing/ambiguous identities, handle file URLs and
+  parent coverage without prefix collisions, and distinguish an empty verified list
+  from a failed read.
+- Live release gate: disposable-folder refresh/add/remove round trip, exact before/
+  after verification, duplicate basenames, spaces/Unicode, parent exclusions, denied
+  Accessibility, focus interruption, stop, and unexpected Settings sheets.
+- Verify the editor remains visible when Settings takes focus. No fake checkmark,
+  success message or automatic retry may follow an unverified result.
+- Validate supported macOS versions/locales; unsupported layouts must report Unknown.
+  No real cache exclusions or reindexing for tests. Build/fixtures do not establish
+  live automation acceptance. See SPOTLIGHT-AUTOMATION.md for the current limitation.
 
 ## Fixed protected-folder access status
 
