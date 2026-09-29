@@ -248,6 +248,18 @@ final class PrivilegedFolderReader {
         registrationDenied = false // One explicit Settings return may retry registration.
         setEnabled(true, completion: completion)
     }
+    /// Periodic access probes never register, unregister, cancel or measure anything.
+    func recheckAccess(completion: @escaping () -> Void) {
+        guard enabled, !busy, !uncertain else { completion(); return }
+        if reconciling { lifecycleCallbacks.append(completion); return }
+        lifecycleCallbacks.append(completion)
+        reconciling = true; activeRevision = lifecycleRevision
+        refreshAvailability {
+            guard self.activeRevision == self.lifecycleRevision, self.enabled,
+                  self.packageValid, self.registration == 1 else { self.finishReconciliation(); return }
+            self.validateAccess()
+        }
+    }
     /// Caller owns the app's global scan slot. This never opens setup or requests approval.
     func measure(onStarted: @escaping () -> Void = {}, completion: @escaping (Measurement) -> Void) {
         guard enabled, ready, !busy, !uncertain, packageValid, registration == 1, failure == nil, !needsAccess else {

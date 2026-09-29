@@ -431,3 +431,18 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
   revoked or the reader cannot connect. Do not grant/reset live permissions merely
   for fixtures. Offscreen example-state rendering verifies layout, not OS permission
   application or live scanner behavior.
+
+## Access feedback dismissal and automatic rechecks
+
+- A first successful scan removes that folder's banner immediately. Cached follow-up
+  results and routine preflight stay quiet. A later failure brings the warning back.
+- Mixed outcomes keep unresolved folders visible; cancellation does not count as
+  verification. Fresh startup begins a new verification session.
+- A timer fixture detects a grant without a Settings-return event. Read-only reader
+  rechecks use only status/check, never register/unregister/measure. Fixtures verify
+  one in-flight poll, conditional restart advice after a failed check, one resumed
+  request, and no more polling after recovery.
+- Manually grant pending access using System Settings opened independently. Confirm
+  the app rechecks within roughly five seconds when idle, resumes once if usable,
+  and suggests quit/reopen if access still fails. macOS reapproval and restart remain
+  manual acceptance; do not reset working permissions just to run this fixture.

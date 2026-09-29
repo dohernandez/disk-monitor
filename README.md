@@ -198,7 +198,8 @@ in macOS. See [the exclusion workflow](docs/USAGE.md#spotlight-exclusion-suggest
 ## Visible protected-folder access status
 
 A status panel below the dashboard header stays visible while you scroll. It
-distinguishes access checks, connection attempts, scans in progress and successful
-scan results. **Scan succeeded · access verified** includes the measurement time
-and folder name. Failures remain visible even if macOS permission switches look
-enabled. This is current-session evidence, not a promise that every folder is readable.
+distinguishes access checks, connection attempts and scans in progress. Each folder
+leaves the panel after its first successful scan; routine scans stay quiet unless
+access fails again. Pending access is rechecked every five seconds, independently
+of the folder-scan interval. If permissions are already enabled but checks still
+fail, the panel suggests quitting and reopening Disk Monitor.
