@@ -1049,6 +1049,7 @@ struct Dashboard: View {
             ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    PendingUpdateNotice()
                     AlertPanel(model: model)
                     LargestFolders(model: model)
                     Divider().padding(.vertical, 3)
@@ -1105,12 +1106,13 @@ struct Dashboard: View {
     }
 }
 final class StatusBadgeView: NSView {
+    var updateAvailable = false { didSet { needsDisplay = true } }
     var level = 0 { didSet { needsDisplay = true } }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
-        (level==3 ? NSColor.systemRed : level==2 ? NSColor.systemOrange : NSColor.systemYellow).setFill()
+        (updateAvailable ? NSColor.systemBlue : level==3 ? NSColor.systemRed : level==2 ? NSColor.systemOrange : NSColor.systemYellow).setFill()
         NSBezierPath(ovalIn: bounds).fill()
-        let text = NSAttributedString(string: level==1 ? "?" : "!", attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: level==1 ? NSColor.black : NSColor.white])
+        let text = NSAttributedString(string: updateAvailable ? "↓" : level==1 ? "?" : "!", attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: !updateAvailable && level==1 ? NSColor.black : NSColor.white])
         text.draw(at: NSPoint(x: bounds.midX - text.size().width / 2, y: bounds.midY - text.size().height / 2))
     }
 }
@@ -1121,6 +1123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var outsideClickMonitor: Any?
     var localEventMonitor: Any?
     let statusBadge = StatusBadgeView(frame: .zero)
+    let updateBadge = StatusBadgeView(frame: .zero)
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppUpdates.shared.start { [weak self] in self?.model.scanning == true || self?.model.folderAccess.uncertain == true }
         launchDiagnostic("didFinish")
@@ -1146,6 +1149,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 statusBadge.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: 1)
             ])
         }
+        if let button = item.button {
+            updateBadge.updateAvailable = true
+            updateBadge.translatesAutoresizingMaskIntoConstraints = false
+            updateBadge.setAccessibilityElement(false)
+            button.addSubview(updateBadge)
+            NSLayoutConstraint.activate([
+                updateBadge.widthAnchor.constraint(equalToConstant: 10),
+                updateBadge.heightAnchor.constraint(equalToConstant: 10),
+                updateBadge.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: -1),
+                updateBadge.topAnchor.constraint(equalTo: button.topAnchor, constant: 1)
+            ])
+        }
+        AppUpdates.shared.onChange = { [weak self] in self?.updateStatusIcon() }
         model.onStatus = { [weak self] in self?.updateStatusIcon() }
         model.onStartupAccessNeeded = { [weak self] in
             guard let self, !self.popover.isShown else { return }
@@ -1162,6 +1178,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func updateStatusIcon() {
         guard let button = item?.button else { return }
         let alerts = model.alerts
+        let updateTitle = AppUpdates.shared.pendingTitle
+        updateBadge.isHidden = updateTitle == nil
         // AppKit tints the template for the menu bar, including wallpaper and appearance changes.
         // The colored badge is a separate, mouse-transparent overlay.
         let drive = NSImage(systemSymbolName: "internaldrive", accessibilityDescription: "Disk Monitor")
@@ -1172,11 +1190,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusBadge.level = diskBadgeLevel(alerts)
         guard !alerts.isEmpty else {
             button.toolTip = "Disk Monitor · \(sizeText(model.free)) free · no active alerts"
+            if let updateTitle { button.toolTip = updateTitle + "\n" + (button.toolTip ?? "") }
             button.setAccessibilityLabel(button.toolTip)
             return
         }
         button.toolTip = alerts.map(\.title).joined(separator: "\n") + "\nClick for details."
-        button.setAccessibilityLabel("Disk Monitor: " + alerts.map(\.title).joined(separator: "; "))
+        if let updateTitle { button.toolTip = updateTitle + "\n" + (button.toolTip ?? "") }
+        button.setAccessibilityLabel(button.toolTip)
     }
     @objc func toggle() {
         if popover.isShown { popover.performClose(nil) }
@@ -1226,6 +1246,17 @@ if CommandLine.arguments.contains("--updater-self-test") {
     AppUpdates.shared.start { false }
     precondition(AppUpdates.shared.failure == nil, "Sparkle configuration must start successfully")
     precondition(!AppUpdates.shared.checks && !AppUpdates.shared.downloads)
+    let updates = AppUpdates.shared
+    precondition(updates.supportsGentleScheduledUpdateReminders && updates.pendingTitle == nil)
+    updates.recordPending("2.0")
+    precondition(updates.pendingTitle == "Disk Monitor 2.0 · update available")
+    updates.recordPending("2.0", onQuit: true); updates.recordPending("2.0")
+    precondition(updates.installsOnQuit && updates.pendingTitle!.contains("on quit"))
+    updates.recordPending("2.1")
+    precondition(!updates.installsOnQuit && updates.pendingVersion == "2.1")
+    updates.clearPending(); precondition(updates.pendingTitle == nil)
+    updates.testReminderCallbacks()
+    print("PASS: pending update reminders and install-on-quit state")
     print("PASS: embedded Sparkle starts with automatic checks and downloads disabled")
     exit(0)
 }

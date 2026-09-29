@@ -389,3 +389,9 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
   removes it, and an empty group disappears. Fixtures cover these transitions.
 - Permission checks, restart guidance and exactly-once scan resumption are unchanged.
   Manually verify wrapping with several long folder names and each Settings action.
+
+## Pending update reminders
+
+- With daily checks enabled, a scheduled Sparkle update produces a blue menu-bar arrow and popup update card; no manual check is needed to expose a discovered update. Disk warning badges remain independently visible.
+- Clicking the card or Show Update opens Sparkle’s existing prompt. Install on Quit keeps the reminder; Skip clears it. A newer version replaces the pending title. An automatic install-on-quit callback also exposes the reminder even without a dialog.
+- Verify background discovery, both badge types, download/install-on-quit, skip, relaunch and sleep/wake scheduling in the live app. Isolated tests verify reminder state and updater startup without contacting the feed or installing.
