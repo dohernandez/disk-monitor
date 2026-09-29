@@ -254,3 +254,33 @@ Library caches check includes immediate child directories, but cannot guarantee
 access to every nested item without scanning it. Background approval is checked
 through macOS service status. Updates refresh this app's background registration;
 you may need to approve it again. Saved measurements are retained.
+
+## Spotlight exclusion suggestions
+
+In **Settings → Caches & tools → Spotlight exclusions**, detected folders reuse the
+same cache/tool paths as tracking: Library caches, Go modules, Cargo, Rust toolchains,
+Anvil temporary files, Claude session history, Docker VM storage and Nix store.
+Custom cache roots also appear when present. The Spotlight index itself is omitted.
+Suggestions remain available when size tracking is unchecked; no personal project
+or worktree path is built into this list.
+
+1. Click **Open Spotlight settings…**, then **Search Privacy** (called **Spotlight
+   Privacy** on older macOS). If settings opens elsewhere, navigate to Spotlight.
+2. Use the macOS **+** button to add a folder. Alternatively, reopen Disk Monitor and
+   drag a folder name from the suggestions into the privacy list. Each row also has
+   **Show in Finder** and **Copy path** actions for hidden or deeply nested folders.
+3. Use **Add folder…** in Disk Monitor to save personal suggestions, such as a worktree
+   directory. Add those folders to the macOS list too.
+
+This follows [Apple's Search Privacy workflow](https://support.apple.com/en-gb/guide/mac-help/mchl1bb43b84/mac).
+Excluded contents will not appear in Spotlight search. The app does not read or
+modify macOS's private exclusion database, so the suggestions are not an exclusion
+status display. **Remove from suggestions** only removes a saved suggestion; remove
+the entry in Search Privacy to allow indexing again. Adding/removing suggestions
+does not change measurements, tracking, permissions or scan schedules. No files
+are renamed, marked or deleted. Index size reduction is not guaranteed or immediate.
+
+Custom suggestions save immediately and survive app restarts and updates. Missing
+custom paths stay visible as **Folder not found**, with copy/remove actions.
+
+![Spotlight exclusion suggestions with example folders](screenshots/exclusions.png)

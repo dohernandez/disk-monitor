@@ -79,6 +79,21 @@ func sizeText(_ bytes: Int64) -> String {
 }
 struct Reading: Codable { var bytes: Int64; var previous: Int64?; var date: Date; var incomplete: Bool? = nil; var scanError: String? = nil; var protectedOnly: Bool? = nil; var administratorMeasured: Bool? = nil; var missing: Bool? = nil }
 struct Root: Codable, Identifiable { var path: String; var title: String; var id: String { path } }
+// These are suggestions to take to macOS, never a mirror of its Search Privacy list.
+enum SpotlightSuggestions {
+    static let preferenceKey = "spotlightCustomSuggestions"
+    static func normalized(_ path: String, indexPath: String) -> String? {
+        guard path.hasPrefix("/") else { return nil }
+        let path = URL(fileURLWithPath: path).standardizedFileURL.path
+        let indexes = [indexPath, "/.Spotlight-V100", "/System/Volumes/Data/.Spotlight-V100"]
+        guard !indexes.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
+        return path
+    }
+    static func paths(_ paths: [String], indexPath: String) -> [String] {
+        var seen = Set<String>()
+        return paths.compactMap { normalized($0, indexPath: indexPath) }.filter { seen.insert($0).inserted }
+    }
+}
 struct Saved: Codable { var readings: [String: Reading]; var extras: [Root]; var projectPath: String? = nil; var excludedPaths: [String]? = nil; var projects: [Root]? = nil; var customCaches: [Root]? = nil; var largestCount: Int? = nil }
 struct DiskAlert: Identifiable {
     let id: String
@@ -249,6 +264,7 @@ final class Model: ObservableObject {
     var timer: Timer?
     var folderTimer: Timer?
     let preferences: UserDefaults
+    @Published private(set) var spotlightCustomSuggestions: [String] = []
     @Published private(set) var spaceThresholds = SpaceThresholds()
     @Published private(set) var diskInterval = 30
     @Published private(set) var folderInterval = 300
@@ -281,6 +297,25 @@ final class Model: ObservableObject {
         let excluded = excludedPaths
         return defaultCacheOptions.filter { !excluded.contains($0.path) && !projects.contains($0.path) && !custom.contains($0.path) && !extraPaths.contains($0.path) } + customCaches
     }
+    var spotlightSuggestedCaches: [Root] {
+        var seen = Set<String>()
+        return (defaultCacheOptions + customCaches).filter { root in
+            var directory: ObjCBool = false
+            return SpotlightSuggestions.normalized(root.path, indexPath: spotlightPath) != nil
+                && FileManager.default.fileExists(atPath: root.path, isDirectory: &directory) && directory.boolValue
+                && seen.insert(root.path).inserted
+        }
+    }
+    func addSpotlightSuggestions(_ urls: [URL]) {
+        let builtIn = Set(spotlightSuggestedCaches.map(\.path))
+        let added = urls.filter(\.isFileURL).map { $0.standardizedFileURL.path }.filter { !builtIn.contains($0) }
+        spotlightCustomSuggestions = SpotlightSuggestions.paths(spotlightCustomSuggestions + added, indexPath: spotlightPath)
+        preferences.set(spotlightCustomSuggestions, forKey: SpotlightSuggestions.preferenceKey)
+    }
+    func removeSpotlightSuggestion(_ path: String) {
+        spotlightCustomSuggestions.removeAll { $0 == path }
+        preferences.set(spotlightCustomSuggestions, forKey: SpotlightSuggestions.preferenceKey)
+    }
     let saveURL: URL
     let spotlightPath: String
     let nixStorePath: String
@@ -290,6 +325,7 @@ final class Model: ObservableObject {
         self.home = home
         self.saveURL = saveURL
         self.preferences = preferences
+        spotlightCustomSuggestions = SpotlightSuggestions.paths(preferences.stringArray(forKey: SpotlightSuggestions.preferenceKey) ?? [], indexPath: spotlightPath)
         let critical = preferences.object(forKey: "criticalFreePercent") as? Int ?? 10
         let warning = preferences.object(forKey: "warningFreePercent") as? Int ?? 20
         if SpaceThresholds.valid(critical: critical, warning: warning) { spaceThresholds = SpaceThresholds(critical: critical, warning: warning) }
@@ -896,7 +932,78 @@ struct FolderSettings: View {
             }
             Text("Every folder uses the same access and scan flow. macOS asks for any supported permissions when needed. See Info for protected-folder access.").font(.caption).foregroundStyle(Palette.secondary)
             Button("Add cache folders…") {model.chooseRoots(asProject: false)}
+            Divider()
+            SpotlightExclusionSettings(model: model)
         }.font(.system(size: 11))
+    }
+}
+struct SpotlightExclusionSettings: View {
+    @ObservedObject var model: Model
+    @State private var expanded = false
+    @State private var message: String?
+    var body: some View {
+        DisclosureGroup("Spotlight exclusions", isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Keep selected folders out of Spotlight search while Disk Monitor continues to measure them.")
+                Text("Open Spotlight settings, then Search Privacy (Spotlight Privacy on older macOS). Add a folder there, or drag a folder name below into that list.")
+                Button("Open Spotlight settings…") {
+                    if !NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.spotlight")!) {
+                        message = "Open System Settings → Spotlight → Search Privacy."
+                    }
+                }
+                Text("Suggestions from Caches & tools").fontWeight(.semibold)
+                let suggestions = model.spotlightSuggestedCaches
+                if suggestions.isEmpty { Text("No cache folders detected on this Mac.").foregroundStyle(Palette.secondary) }
+                ForEach(suggestions) { root in SpotlightSuggestionRow(root: root, remove: nil) }
+                let builtIn = Set(suggestions.map(\.path))
+                let custom = model.spotlightCustomSuggestions.filter { !builtIn.contains($0) }
+                if !custom.isEmpty {
+                    Text("Your folders").fontWeight(.semibold)
+                    ForEach(custom, id: \.self) { path in
+                        SpotlightSuggestionRow(root: Root(path: path, title: URL(fileURLWithPath: path).lastPathComponent),
+                                               remove: { model.removeSpotlightSuggestion(path) })
+                    }
+                }
+                Button("Add folder…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
+                    panel.prompt = "Add to suggestions"
+                    panel.message = "Save folders here to add to Spotlight Search Privacy. This does not change macOS exclusions."
+                    if panel.runModal() == .OK {
+                        model.addSpotlightSuggestions(panel.urls)
+                        message = panel.urls.contains { SpotlightSuggestions.normalized($0.path, indexPath: model.spotlightPath) == nil }
+                            ? "The Spotlight index itself is not an exclusion suggestion." : nil
+                    }
+                }
+                if let message { Text(message).foregroundStyle(Palette.secondary) }
+                Text("This is a suggestion list, not your current macOS exclusions. Confirm or remove exclusions in Search Privacy. Tracking checkboxes above only control size measurements.")
+                    .foregroundStyle(Palette.secondary)
+            }.padding(.top, 8).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+struct SpotlightSuggestionRow: View {
+    let root: Root
+    let remove: (() -> Void)?
+    var body: some View {
+        let url = URL(fileURLWithPath: root.path)
+        let exists = FileManager.default.fileExists(atPath: root.path)
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Label(root.title, systemImage: "folder").fontWeight(.medium)
+                    .onDrag { NSItemProvider(object: url as NSURL) }
+                    .help("Drag into Spotlight Search Privacy")
+                Text(root.path).font(.caption).foregroundStyle(Palette.secondary).textSelection(.enabled)
+                    .lineLimit(2).truncationMode(.middle).help(root.path)
+                if !exists { Text("Folder not found").font(.caption).foregroundStyle(Palette.secondary) }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Menu {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }.disabled(!exists)
+                Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(root.path, forType: .string) }
+                if let remove { Button("Remove from suggestions", action: remove) }
+            } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Actions for \(root.title)")
+        }.padding(.vertical, 3)
     }
 }
 struct RefreshSettings: View {
@@ -1818,6 +1925,41 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(spotlightReloaded.defaultCacheOptions.contains { $0.path == spotlightFolder.path })
     precondition(!spotlightReloaded.caches.contains { $0.path == spotlightFolder.path })
     precondition(spotlightReloaded.readings[spotlightFolder.path]?.bytes == 48*gib)
+    // Exclusion suggestions are portable and independent of measurement preferences.
+    let suggestionHome = root.appendingPathComponent("suggestion-home")
+    let suggestionNix = suggestionHome.appendingPathComponent("nix/store")
+    let cacheSuffixes = ["Library/Caches", "go/pkg/mod", ".cargo", ".rustup", ".foundry/anvil/tmp", ".claude/projects", "Library/Containers/com.docker.docker/Data/vms", "nix/store"]
+    for suffix in cacheSuffixes { try fm.createDirectory(at: suggestionHome.appendingPathComponent(suffix), withIntermediateDirectories: true) }
+    let suggestionState = root.appendingPathComponent("suggestion-state/readings.json")
+    let suggestionModel = Model(nixStorePath: suggestionNix.path, home: suggestionHome.path, preferences: prefs, saveURL: suggestionState, spotlightPath: spotlightFolder.path)
+    let cachePath = suggestionHome.appendingPathComponent("Library/Caches").path
+    suggestionModel.readings[cachePath] = Reading(bytes: 123, date: Date())
+    suggestionModel.stopTracking(cachePath)
+    precondition(suggestionModel.spotlightSuggestedCaches.count == 8)
+    precondition(suggestionModel.spotlightSuggestedCaches.contains { $0.path == cachePath }, "Unchecking tracking must not hide an exclusion suggestion")
+    precondition(!suggestionModel.spotlightSuggestedCaches.contains { $0.path == spotlightFolder.path })
+    let customSuggestion = suggestionHome.appendingPathComponent("personal worktree")
+    try fm.createDirectory(at: customSuggestion, withIntermediateDirectories: true)
+    let priorTracked = suggestionModel.trackedRoots.map(\.path)
+    let priorSaved = try Data(contentsOf: suggestionState)
+    suggestionModel.addSpotlightSuggestions([customSuggestion, customSuggestion.appendingPathComponent("."), suggestionNix, spotlightFolder, URL(string: "https://example.com/folder")!])
+    precondition(suggestionModel.spotlightCustomSuggestions == [customSuggestion.path], "Normalize and deduplicate without saving built-ins or the index")
+    precondition(suggestionModel.trackedRoots.map(\.path) == priorTracked && !suggestionModel.scanning)
+    let afterSuggestions = try Data(contentsOf: suggestionState)
+    precondition(afterSuggestions == priorSaved, "Suggestion edits must not write measurements")
+    let suggestionReloaded = Model(nixStorePath: suggestionNix.path, home: suggestionHome.path, preferences: UserDefaults(suiteName: suite)!, saveURL: suggestionState, spotlightPath: spotlightFolder.path)
+    precondition(suggestionReloaded.spotlightCustomSuggestions == [customSuggestion.path])
+    precondition(suggestionReloaded.excludedPaths.contains(cachePath) && suggestionReloaded.readings[cachePath]?.bytes == 123)
+    try fm.removeItem(at: customSuggestion)
+    precondition(suggestionReloaded.spotlightCustomSuggestions == [customSuggestion.path], "A missing personal folder stays removable")
+    suggestionReloaded.removeSpotlightSuggestion(customSuggestion.path)
+    precondition(prefs.stringArray(forKey: SpotlightSuggestions.preferenceKey) == [])
+    precondition(SpotlightSuggestions.paths(["relative", "/.Spotlight-V100", spotlightFolder.path + "/Store-V2", "/System/Volumes/Data/.Spotlight-V100", "/tmp/a/../b", "/tmp/b"], indexPath: spotlightFolder.path) == ["/tmp/b"])
+    try fm.removeItem(at: suggestionNix)
+    suggestionModel.readings[suggestionNix.path] = Reading(bytes: 123, date: Date())
+    precondition(!suggestionModel.spotlightSuggestedCaches.contains { $0.path == suggestionNix.path }, "Historical cache readings do not suggest missing folders")
+    suggestionModel.timer?.invalidate(); suggestionModel.folderTimer?.invalidate()
+    suggestionReloaded.timer?.invalidate(); suggestionReloaded.folderTimer?.invalidate()
     // Historical elevated readings remain compatible and never create cross-method growth.
     let baselineDate = Date(timeIntervalSince1970: 100)
     let adminBaseline = Reading(bytes: 40 * gib, date: baselineDate, administratorMeasured: true)

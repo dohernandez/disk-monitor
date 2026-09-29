@@ -2,6 +2,7 @@
 """Render current SwiftUI views with example data; no live app or screen capture."""
 import json
 import os
+import platform
 import sys
 import subprocess
 import tempfile
@@ -24,6 +25,12 @@ if APP == "disk-monitor":
     # Disable live saved-state loading, capacity queries and timers in the copy.
     source = source.replace('@State private var showingSettings = false',
         '@State private var showingSettings = CommandLine.arguments.contains("settings")')
+    # Preview detection uses only fixture readings, never real directory availability.
+    source = source.replace('FileManager.default.fileExists(atPath: root.path, isDirectory: &directory) && directory.boolValue',
+        'readings[root.path] != nil')
+    source = source.replace('let exists = FileManager.default.fileExists(atPath: root.path)', 'let exists = true')
+    source = source.replace('@State private var expanded = false',
+        '@State private var expanded = CommandLine.arguments.contains("exclusions")')
 else:
     assert source.count('@State private var page="Usage"') == 1
     source = source.replace('@State private var page="Usage"',
@@ -42,12 +49,20 @@ with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
     overlay = temporary / "overlay.json"
     overlay.write_text(json.dumps({"version": 0, "roots": roots}))
     binary = temporary / "render"
-    subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-vfsoverlay", str(overlay),
+    app_sources = [str(ROOT / "Updates.swift")]
+    flags = []
+    if APP == "disk-monitor":
+        app_sources += [str(ROOT / name) for name in ["FolderAccess.swift", "PrivilegedFolderReader.swift",
+            "HelperPrototype/BridgeProtocol.swift", "HelperPrototype/Shared.swift", "HelperPrototype/RequestState.swift",
+            "HelperPrototype/RecoveryState.swift", "HelperPrototype/BundlePolicy.swift"]]
+        app_sources.append(str(sparkle.parent / "ScannerIdentity.swift"))
+        flags = ["-D", "DISK_MONITOR", "-target", platform.machine() + "-apple-macos15.0"]
+    subprocess.run(["xcrun", "swiftc", *flags, "-swift-version", "5", "-vfsoverlay", str(overlay),
         "-Xcc", "-ivfsoverlay", "-Xcc", str(overlay), "-module-cache-path", str(temporary / "modules"),
-        str(temporary / "main.swift"), str(ROOT / "Updates.swift"), "-F", str(sparkle), "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", str(sparkle), "-o", str(binary), "-framework", "Cocoa", "-framework", "SwiftUI"], check=True)
+        str(temporary / "main.swift"), *app_sources, "-F", str(sparkle), "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", str(sparkle), "-o", str(binary), "-framework", "Cocoa", "-framework", "SwiftUI"], check=True)
     pages = ["dashboard", "settings"] if APP == "disk-monitor" else ["usage", "subscriptions"]
     pages = sys.argv[1:] or pages
-    assert all(page in ["dashboard", "settings", "spotlight", "usage", "subscriptions"] for page in pages)
+    assert all(page in ["dashboard", "settings", "spotlight", "exclusions", "usage", "subscriptions"] for page in pages)
     for page in pages:
         output = ROOT / "docs/screenshots" / (page + ".png")
         subprocess.run([str(binary), page, str(output)], check=True, timeout=30)

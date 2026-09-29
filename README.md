@@ -183,3 +183,14 @@ permission prompts and reports required access in Needs Attention. There are no
 scanner setup or repair windows. The working signed privileged measurement remains
 internal to the single app; ordinary folders use direct filesystem access.
 Saved readings are kept on failures. See [usage details](docs/USAGE.md#shared-folder-access-and-measurement).
+
+## Spotlight exclusion suggestions
+
+**Settings → Caches & tools → Spotlight exclusions** lists detected cache/tool folders
+(including Anvil temporary files and Nix store) and offers **Add folder…** for personal
+paths such as worktrees. Tracking and Spotlight exclusions are independent.
+
+Open Spotlight settings, choose **Search Privacy** (or **Spotlight Privacy** on older
+macOS), and add or drag the folders you want excluded. The app saves custom suggestions;
+it does not report them as applied exclusions. Confirm or remove actual exclusions
+in macOS. See [the exclusion workflow](docs/USAGE.md#spotlight-exclusion-suggestions).

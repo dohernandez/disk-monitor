@@ -395,3 +395,23 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
 - With daily checks enabled, a scheduled Sparkle update produces a blue menu-bar arrow and popup update card; no manual check is needed to expose a discovered update. Disk warning badges remain independently visible.
 - Clicking the card or Show Update opens Sparkle’s existing prompt. Install on Quit keeps the reminder; Skip clears it. A newer version replaces the pending title. An automatic install-on-quit callback also exposes the reminder even without a dialog.
 - Verify background discovery, both badge types, download/install-on-quit, skip, relaunch and sleep/wake scheduling in the live app. Isolated tests verify reminder state and updater startup without contacting the feed or installing.
+
+## Spotlight exclusion suggestions
+
+- Fixtures verify portable detection of all eight non-index cache types, independence
+  from tracking toggles, exclusion of the Spotlight index, and omission of missing
+  built-ins even when they have saved readings.
+- Fixtures verify custom path normalization/deduplication, rejection of non-file URLs
+  and index paths, persistence through reload, missing-custom retention and removal.
+  Measurements and tracked roots must not change; no scan should start.
+- Open the disclosure under Caches & tools. Check wrapping in the 440-point popup,
+  path tooltips, and row action menus. App updates remains the last Settings section.
+- Manually check the Settings link on supported macOS versions (fall back to navigating
+  to Spotlight if needed), then Search Privacy / Spotlight Privacy. Verify a fixture
+  folder can be added through macOS's + button and by dragging the folder URL.
+- Check Add folder cancellation, multiple selections, Show in Finder and Copy path.
+  Custom selection must survive restart without appearing as a confirmed exclusion.
+- Remove from suggestions must only alter the app list; verify actual exclusion
+  changes are performed in macOS. Never use real cache exclusion or reindexing as a
+  fixture test. Native panel/drag/Settings integration remains manual acceptance;
+  offscreen rendering does not establish those interactions.
