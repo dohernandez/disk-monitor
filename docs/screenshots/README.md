@@ -36,3 +36,7 @@ Render the expanded **Spotlight exclusions** suggestions with
 for detection and never changes macOS exclusions. For isolated builds set
 `SPARKLE_TOOLS=<BUILD_DIR>/sparkle`; the renderer also uses that build's generated
 `ScannerIdentity.swift` and the app's shared access types without starting them.
+
+Render the fixed protected-folder feedback states with
+`python3 docs/screenshots/render.py access`. These are illustrative observations;
+no access check, reader connection, scan or permission prompt is performed.

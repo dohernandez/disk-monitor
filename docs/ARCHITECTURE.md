@@ -435,3 +435,21 @@ Settings link, following Apple's Search Privacy workflow. The app cannot verify
 that a suggestion was applied and never presents it as confirmed. No private
 Spotlight database writes, filesystem markers, privileged operations or new access
 requests are used. Scan/access behavior and tracking checkboxes remain independent.
+
+## Current-session access feedback
+
+`FolderAccess` records in-memory observations for the privileged reader, Library
+caches and folders that encounter a permission requirement. Existing preflight
+and result callbacks update these observations; no extra checks or scans run.
+`PrivilegedFolderReader.measure(onStarted:completion:)` exposes the existing bridge
+`measuring` event once per request. That event means connected/request dispatched,
+not proof of a successful filesystem traversal. Only a returned root value without
+a scan error produces verified feedback. Cached reader replies retain their actual
+measurement time; saved readings JSON is never used as permission evidence.
+
+`FolderAccessStatusPanel` sits outside the dashboard ScrollView. Failed/uncertain
+states take priority, then scans in progress and checks; other folders are summarized.
+Observations are filtered to tracked roots/descendants. Request cancellation keeps
+unconfirmed evidence visible; a new app instance starts without verified evidence.
+No observation is persisted and none controls registration, permission requests,
+scan resumption, timers or cancellation.
