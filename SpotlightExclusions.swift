@@ -276,10 +276,18 @@ final class SpotlightExclusionControls: ObservableObject {
         refreshPermission()
     }
     func report(_ message: String) { error = message }
+    // Test mode only: changes outside this folder are refused before any Accessibility call.
+    var mutationScope: String?
+    func permits(_ path: String) -> Bool {
+        guard let scope = mutationScope.flatMap(SpotlightPrivacySnapshot.path) else { return true }
+        guard let path = SpotlightPrivacySnapshot.path(path) else { return false }
+        return path.hasPrefix(scope + "/")
+    }
     func refresh() { perform() }
     func set(_ path: String, excluded: Bool) { perform(path: path, excluded: excluded) }
     private func perform(path: String? = nil, excluded: Bool = false) {
         guard !busy else { return }
+        if let path, !permits(path) { error = "Test mode only changes the disposable fixture folders."; return }
         trusted = AXIsProcessTrusted()
         guard trusted else { error = "Allow Disk Monitor in Accessibility, then retry."; return }
         lock.lock(); stopRequested = false; lock.unlock()
@@ -392,5 +400,100 @@ struct SpotlightExclusionEditor: View {
             }.disabled(controls.busy || controls.snapshot == nil)
         }.onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in controls.refreshPermission() }
         .padding(20).frame(minWidth: 440, minHeight: 360).foregroundStyle(Palette.primary).background(Palette.background)
+    }
+}
+
+// Development-only live validation (docs/SPOTLIGHT-AUTOMATION.md). Opens only the
+// exclusion window with isolated preferences and readings: no status item, updater,
+// scanner registration, scans or timers. Mutations are limited to disposable fixtures.
+enum SpotlightExclusionHarness {
+    static let flag = "--spotlight-exclusion-test"
+    static let fixtures = ["duplicate-a/Cache", "duplicate-b/Cache", "folder with spaces", "Ünïcødé 文件夹", "excluded-parent", "excluded-parent/child"]
+    static func requested(_ arguments: [String]) -> Bool { arguments.contains(flag) }
+    static var defaultRoot: URL { FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-fixtures") }
+    struct Environment {
+        let root: String
+        let suite: String
+        let state: URL
+        let model: Model
+        func cleanup() {
+            UserDefaults.standard.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: state)
+        }
+    }
+    // Fixture folders are kept between runs: a leftover exclusion can be removed next time.
+    static func prepare(root: URL) throws -> Environment {
+        let fm = FileManager.default
+        if let type = try? fm.attributesOfItem(atPath: root.path)[.type] as? FileAttributeType, type != .typeDirectory {
+            throw SpotlightPrivacyError.unavailable("The fixture location is not a plain folder: \(root.path)")
+        }
+        for name in fixtures {
+            let url = root.appendingPathComponent(name)
+            try fm.createDirectory(at: url, withIntermediateDirectories: true)
+            guard try fm.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType == .typeDirectory else {
+                throw SpotlightPrivacyError.unavailable("A fixture is not a plain folder: \(url.path)")
+            }
+        }
+        guard let resolved = SpotlightPrivacySnapshot.path(root.path) else { throw SpotlightPrivacyError.unavailable("Invalid fixture location.") }
+        let suite = "local.darien.diskmonitor.exclusion-test." + UUID().uuidString
+        guard let preferences = UserDefaults(suiteName: suite) else { throw SpotlightPrivacyError.unavailable("Could not create test preferences.") }
+        // Only this unique suite is written; cleanup removes it. Registered defaults would leak process-wide.
+        preferences.set(fixtures.map { resolved + "/" + $0 }, forKey: SpotlightSuggestions.preferenceKey)
+        let state = fm.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-state-" + UUID().uuidString)
+        let model = Model(nixStorePath: state.appendingPathComponent("missing-nix").path, home: state.path, preferences: preferences,
+                          saveURL: state.appendingPathComponent("readings.json"), spotlightPath: state.appendingPathComponent("missing-index").path)
+        model.timer?.invalidate(); model.folderTimer?.invalidate(); model.timer = nil; model.folderTimer = nil
+        return Environment(root: resolved, suite: suite, state: state, model: model)
+    }
+    final class Delegate: NSObject, NSApplicationDelegate {
+        let environment: Environment
+        init(_ environment: Environment) { self.environment = environment }
+        func applicationDidFinishLaunching(_ notification: Notification) {
+            let editor = SpotlightExclusionWindow.shared
+            editor.controls.mutationScope = environment.root
+            editor.show(model: environment.model)
+            editor.window?.title = "Disk Monitor — Spotlight exclusions (test mode)"
+        }
+        func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+        func applicationWillTerminate(_ notification: Notification) {
+            SpotlightExclusionWindow.shared.controls.cancel(); environment.cleanup()
+        }
+    }
+    static func run() -> Never {
+        let app = NSApplication.shared
+        let environment: Environment
+        do { environment = try prepare(root: defaultRoot) }
+        catch { fputs("Spotlight exclusion test setup failed: \(error.localizedDescription)\n", stderr); exit(1) }
+        print("Spotlight exclusion test mode. Fixtures: \(environment.root)")
+        let delegate = Delegate(environment)
+        app.delegate = delegate
+        app.setActivationPolicy(.regular)
+        withExtendedLifetime(delegate) { app.run() }
+        exit(0)
+    }
+    static func selfTest() throws {
+        precondition(requested(["DiskMonitor", flag]) && !requested(["DiskMonitor", "--show"]))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-harness-test-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = try prepare(root: root)
+        defer { environment.cleanup() }
+        let model = environment.model
+        precondition(model.timer == nil && model.folderTimer == nil && !model.scanning, "Test mode must not schedule refreshes or scans")
+        precondition(model.trackedRoots.isEmpty, "Test mode must not track real folders")
+        precondition(model.saveURL.path.hasPrefix(environment.state.path) && !FileManager.default.fileExists(atPath: model.saveURL.path))
+        precondition(model.preferences !== UserDefaults.standard && environment.suite != Bundle.main.bundleIdentifier)
+        precondition(model.spotlightCustomSuggestions == fixtures.map { environment.root + "/" + $0 })
+        precondition(UserDefaults.standard.stringArray(forKey: SpotlightSuggestions.preferenceKey) != model.spotlightCustomSuggestions, "Fixtures stay out of the app's own preferences")
+        let controls = SpotlightExclusionControls()
+        controls.mutationScope = environment.root
+        precondition(controls.permits(environment.root + "/folder with spaces") && controls.permits(environment.root + "/excluded-parent/child"))
+        precondition(!controls.permits(environment.root) && !controls.permits(environment.root + "-other") && !controls.permits("/tmp") && !controls.permits(environment.root + "/../x"))
+        controls.set("/tmp", excluded: true)
+        precondition(!controls.busy && controls.error != nil, "Out-of-scope changes are refused before automation")
+        try? FileManager.default.removeItem(at: root)
+        try FileManager.default.createSymbolicLink(at: root, withDestinationURL: FileManager.default.temporaryDirectory)
+        do { _ = try prepare(root: root); preconditionFailure("A linked fixture location must be refused") } catch is SpotlightPrivacyError { }
+        environment.cleanup()
+        precondition(UserDefaults.standard.persistentDomain(forName: environment.suite) == nil && !FileManager.default.fileExists(atPath: environment.state.path), "Cleanup removes isolated state")
     }
 }

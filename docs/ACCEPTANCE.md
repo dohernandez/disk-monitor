@@ -410,6 +410,10 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
 - Validate supported macOS versions/locales; unsupported layouts must report Unknown.
   No real cache exclusions or reindexing for tests. Build/fixtures do not establish
   live automation acceptance. See SPOTLIGHT-AUTOMATION.md for the current limitation.
+- Test mode (`--spotlight-exclusion-test`) fixtures: dispatch precedes normal startup;
+  no timers, scans, tracked roots or readings file; isolated preference suite removed
+  on cleanup; changes outside the fixture folder are refused before automation;
+  a linked fixture location is refused.
 
 ## Fixed protected-folder access status
 

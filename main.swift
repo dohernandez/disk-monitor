@@ -1312,6 +1312,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
     func applicationWillTerminate(_ notification: Notification) { stopDismissMonitors(); model.scanner.cancel() }
 }
+// Checked first so the development-only exclusion test never reaches normal startup.
+if SpotlightExclusionHarness.requested(CommandLine.arguments) { SpotlightExclusionHarness.run() }
 if CommandLine.arguments.contains("--scanner-package-self-test") {
     let host = Bundle.main.bundleURL
     do { try BundlePolicy.validate(at: host); print("PASS: internal scanner executables and pinned signatures") }
@@ -1340,6 +1342,7 @@ if CommandLine.arguments.contains("--updater-self-test") {
 }
 if CommandLine.arguments.contains("--self-test") {
     try SpotlightExclusionControls.selfTest()
+    try SpotlightExclusionHarness.selfTest()
     let scanWarning=DiskAlert(id:"scan:test",critical:false,title:"Scan",detail:"Denied",path:nil,measurementIssue:true)
     let spaceWarning=diskSpaceAlert(free:150*gib,capacity:1000*gib)!
     let criticalWarning=diskSpaceAlert(free:90*gib,capacity:1000*gib)!

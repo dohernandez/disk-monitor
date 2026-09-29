@@ -34,6 +34,20 @@ The window stays open when Settings becomes active. One serial worker operates t
 UI; AX messaging and stage waits are bounded. Closing the window requests stopping
 at the next check. Existing scanner/permissions logic is unchanged.
 
+## Test mode for live validation
+
+`DiskMonitor --spotlight-exclusion-test` is a development-only launch that opens
+just the exclusion window. It is checked before any other launch mode and never
+reaches normal startup: no status item, updater, scanner registration, scans or
+timers. Preferences use a unique temporary suite and readings a temporary folder;
+both are removed on quit. Candidates are disposable fixtures in
+`$TMPDIR/DiskMonitor-exclusion-fixtures` (duplicate `Cache` basenames, spaces,
+Unicode, and `excluded-parent/child`). Checkboxes for folders outside that
+location, including real exclusions, are refused before any Accessibility call.
+Fixture folders are kept between runs so a leftover exclusion can be removed
+next time. Quitting mid-operation can leave the Settings sheet open; refresh on
+the next run. Accessibility is still granted to the tested build by the user.
+
 ## Release gate: live validation still required
 
 This is an unverified automation candidate, not a demonstrated working integration.
