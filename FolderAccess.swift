@@ -6,6 +6,67 @@ import ServiceManagement
 final class FolderAccess {
     enum Check: Equatable { case available, permissionRequired, failed(String) }
     enum Requirement: Equatable { case fileAccess, backgroundApproval, failed(String) }
+    enum Activity: Equatable {
+        case checking, ready, connecting, scanning, verified(Date), stopped, attention(String)
+        var priority: Int {
+            switch self {
+            case .attention: return 0
+            case .scanning: return 1
+            case .connecting: return 2
+            case .checking: return 3
+            case .ready: return 4
+            case .stopped: return 5
+            case .verified: return 6
+            }
+        }
+        var title: String {
+            switch self {
+            case .checking: return "Checking folder access…"
+            case .ready: return "Access check passed"
+            case .connecting: return "Connecting to folder reader…"
+            case .scanning: return "Scan in progress"
+            case .verified: return "Scan succeeded · access verified"
+            case .stopped: return "Scan stopped"
+            case .attention: return "Folder access needs attention"
+            }
+        }
+        var detail: String {
+            switch self {
+            case .checking: return "Testing access for this app session."
+            case .ready: return "Folder is readable; a complete scan has not yet been verified."
+            case .connecting: return "Waiting for the reader to respond; scanning is not yet confirmed."
+            case .scanning: return "Scan result pending; complete access is not yet verified."
+            case .verified(let date): return "Successful scan at " + date.formatted(date: .omitted, time: .shortened) + "."
+            case .stopped: return "This scan did not verify complete folder access."
+            case .attention(let reason): return reason
+            }
+        }
+    }
+    struct Observation: Identifiable {
+        let root: Root
+        let activity: Activity
+        var id: String { root.path }
+    }
+    // Current-session evidence only. Saved sizes and macOS toggle state cannot prove access.
+    private var observations: [String: Observation] = [:]
+    func accessObservations(for roots: [Root]) -> [Observation] {
+        observations.values.filter { observation in
+            roots.contains { observation.id == $0.path || observation.id.hasPrefix($0.path + "/") }
+        }.map { observation in
+            if PrivilegedFolderReader.supports(observation.id), reader.uncertain {
+                return Observation(root: observation.root, activity: .attention("Scanner connection or completion is unconfirmed. Restart your Mac before retrying."))
+            }
+            return observation
+        }.sorted {
+            $0.activity.priority == $1.activity.priority ? $0.root.title < $1.root.title : $0.activity.priority < $1.activity.priority
+        }
+    }
+    private func observe(_ root: Root, _ activity: Activity, protected: Bool = false) {
+        guard protected || observations[root.path] != nil || PrivilegedFolderReader.supports(root.path)
+                || root.path.hasSuffix("/Library/Caches") else { return }
+        observations[root.path] = Observation(root: root, activity: activity)
+        onChange?()
+    }
     struct Result {
         var scan: ScanResult
         var date: Date
@@ -57,6 +118,7 @@ final class FolderAccess {
             guard let self else { return }
             let ready = self.pending.values.filter { PrivilegedFolderReader.supports($0.path) }
             for root in ready { self.pending.removeValue(forKey: root.path); self.requirements.removeValue(forKey: root.path); self.failedBeforeScan.remove(root.path); self.fullDiskAccessReviewPaths.remove(root.path) }
+            for root in ready { self.observe(root, .ready) }
             if !ready.isEmpty { self.onGranted?(Array(ready)) }
             self.onChange?()
         }
@@ -102,12 +164,25 @@ final class FolderAccess {
     /// Startup and tracking changes reconcile resource ownership, not a second toggle.
     func synchronize(_ roots: [Root], checkingAccess: Bool = false, completion: @escaping () -> Void = {}) {
         if checkingAccess { for root in roots where !PrivilegedFolderReader.supports(root.path) { cancel(root.path) } }
+        for root in roots where checkingAccess || PrivilegedFolderReader.supports(root.path) { observe(root, .checking) }
         reader.setEnabled(roots.contains { PrivilegedFolderReader.supports($0.path) }) {
             self.prepare(checkingAccess ? roots : roots.filter { PrivilegedFolderReader.supports($0.path) }, requestIfNeeded: false) { _ in completion() }
         }
     }
-    func cancel(_ path: String) { fullDiskAccessReviewPaths.remove(path); failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }
-    func cancelPending() { for path in Array(revisions.keys) { cancel(path) }; pending.removeAll() }
+    func cancel(_ path: String) { observations.removeValue(forKey: path); fullDiskAccessReviewPaths.remove(path); failedBeforeScan.remove(path); revisions[path, default: 0] += 1; pending.removeValue(forKey: path); requirements.removeValue(forKey: path) }
+    func cancelPending() {
+        let previous = observations
+        for path in Array(revisions.keys) { cancel(path) }; pending.removeAll()
+        // Cancelling requests cannot turn an unconfirmed operation into successful access.
+        // Keep its evidence visible; untracked roots are filtered at presentation time.
+        observations = previous.mapValues { observation in
+            switch observation.activity {
+            case .checking, .connecting, .scanning: return Observation(root: observation.root, activity: .stopped)
+            default: return observation
+            }
+        }
+        onChange?()
+    }
     func cancelMeasurement() { reader.cancel() }
     func prepare(_ roots: [Root], requestIfNeeded: Bool, onChecking: @escaping (Root) -> Void = { _ in }, completion: @escaping ([Root]) -> Void) {
         var allowed: [Root] = []
@@ -120,12 +195,14 @@ final class FolderAccess {
             let root = roots[index]
             guard self.revisions[root.path] == tokens[root.path] else { next(index + 1); return }
             onChecking(root)
+            if PrivilegedFolderReader.supports(root.path) || requestIfNeeded || self.pending[root.path] == nil { self.observe(root, .checking) }
             func finish(_ requirement: Requirement?) {
                 guard self.revisions[root.path] == tokens[root.path] else { next(index + 1); return }
                 if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
                 else { self.failedBeforeScan.remove(root.path) }
                 if let requirement { self.requirements[root.path] = requirement; self.pending[root.path] = root }
                 else { self.requirements.removeValue(forKey: root.path); self.pending.removeValue(forKey: root.path); self.fullDiskAccessReviewPaths.remove(root.path); allowed.append(root) }
+                self.observeRequirement(root, requirement)
                 next(index + 1)
             }
             // Capability selection is internal; both readers return to this same gate.
@@ -150,6 +227,14 @@ final class FolderAccess {
         }
         next(0)
     }
+    private func observeRequirement(_ root: Root, _ requirement: Requirement?) {
+        switch requirement {
+        case .fileAccess: observe(root, .attention("Full Disk Access is required. If already enabled, quit and reopen Disk Monitor, then retry."), protected: true)
+        case .backgroundApproval: observe(root, .attention("Background approval is required in Login Items & Extensions."), protected: true)
+        case .failed(let error): observe(root, .attention(error + " If permissions are enabled, quit and reopen Disk Monitor, then retry."))
+        case nil: observe(root, .ready)
+        }
+    }
     private func privilegedRequirement() -> Requirement? {
         if reader.canAutomaticallyMeasure { return nil }
         if reader.needsBackgroundApproval { return .backgroundApproval }
@@ -160,22 +245,31 @@ final class FolderAccess {
     /// privileged path is exposed to the model or its scan loop.
     func measure(_ root: Root, scanner: Scanner, completion: @escaping (Result) -> Void) {
         failedBeforeScan.remove(root.path)
+        func finish(_ result: Result) {
+            if result.scan.error == "Cancelled" { self.observe(root, .stopped) }
+            else if let error = result.scan.error { self.observe(root, .attention(error)) }
+            else if result.scan.values[root.path] != nil { self.observe(root, .verified(result.date)) }
+            else { self.observe(root, .attention("No complete folder measurement was returned.")) }
+            completion(result)
+        }
         if PrivilegedFolderReader.supports(root.path) {
-            reader.measure { value in
+            observe(root, .connecting)
+            reader.measure(onStarted: { [weak self] in self?.observe(root, .scanning) }) { value in
                 if value.error != nil, value.error != "Measurement cancelled", let requirement = self.privilegedRequirement() {
                     self.requirements[root.path] = requirement; self.pending[root.path] = root; self.onChange?()
                 }
                 let error = value.error == "Measurement cancelled" ? "Cancelled" : value.error
-                completion(Result(scan: ScanResult(values: value.bytes.map { [root.path: $0] } ?? [:], error: error), date: value.finishedAt, elevated: true))
+                finish(Result(scan: ScanResult(values: value.bytes.map { [root.path: $0] } ?? [:], error: error), date: value.finishedAt, elevated: true))
             }
         } else {
+            observe(root, .scanning)
             DispatchQueue.global(qos: .utility).async {
                 let result = scanner.scan(root.path)
-                DispatchQueue.main.async { completion(Result(scan: result, date: Date())) }
+                DispatchQueue.main.async { finish(Result(scan: result, date: Date())) }
             }
         }
     }
-    func reportDenied(_ root: Root) { pending[root.path] = root; requirements[root.path] = .fileAccess; onChange?() }
+    func reportDenied(_ root: Root) { pending[root.path] = root; requirements[root.path] = .fileAccess; observeRequirement(root, .fileAccess); onChange?() }
     func openSettings(for root: Root) {
         willOpenSettings(fullDiskAccess: requirements[root.path] != .backgroundApproval)
         if requirements[root.path] == .backgroundApproval { SMAppService.openSystemSettingsLoginItems() }
@@ -192,6 +286,7 @@ final class FolderAccess {
         // never infer that it was granted or that a restart is definitely required.
         if reviewingFullDiskAccess { fullDiskAccessReviewPaths.formUnion(roots.map(\.path)) }
         reviewingFullDiskAccess = false
+        for root in roots { observe(root, .checking) }
         onChange?()
         let ordinary = roots.filter { !PrivilegedFolderReader.supports($0.path) }
         // The reader's onReady callback owns resuming elevated requests exactly once.
@@ -204,6 +299,7 @@ final class FolderAccess {
                     self.requirements[root.path] = requirement
                     if case .failed = requirement { self.failedBeforeScan.insert(root.path) }
                     else { self.failedBeforeScan.remove(root.path) }
+                    self.observeRequirement(root, requirement)
                 }
                 self.onChange?()
             }

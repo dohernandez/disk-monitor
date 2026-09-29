@@ -30,6 +30,7 @@ final class PrivilegedFolderReader {
     private let pendingKey = "spotlightPendingScanBoot"
     private var timer: Timer?
     private var completion: ((Measurement) -> Void)?
+    private var measurementStarted: (() -> Void)?
     private var last: Measurement?
     private var retryAt: TimeInterval = 0
     private var cancelling = false
@@ -248,7 +249,7 @@ final class PrivilegedFolderReader {
         setEnabled(true, completion: completion)
     }
     /// Caller owns the app's global scan slot. This never opens setup or requests approval.
-    func measure(completion: @escaping (Measurement) -> Void) {
+    func measure(onStarted: @escaping () -> Void = {}, completion: @escaping (Measurement) -> Void) {
         guard enabled, ready, !busy, !uncertain, packageValid, registration == 1, failure == nil, !needsAccess else {
             completion(.failed("Folder access is required")); return
         }
@@ -259,13 +260,17 @@ final class PrivilegedFolderReader {
         }
         busy = true; cancelling = false; uncertain = false; measuring = false
         self.completion = completion; measurementID = UUID()
+        measurementStarted = onStarted
         let token = measurementID
         started = now
         startTimer()
         run("measure") { reply in
             guard self.busy, self.measurementID == token else { return }
             switch reply.event {
-            case "measuring": self.measuring = true; self.started = self.now
+            case "measuring":
+                self.measuring = true; self.started = self.now
+                let callback = self.measurementStarted; self.measurementStarted = nil
+                callback?()
             case "result":
                 guard let result = reply.measurement,
                       result.finishedAt.timeIntervalSince1970.isFinite,
@@ -293,6 +298,7 @@ final class PrivilegedFolderReader {
         preferences.removeObject(forKey: pendingKey)
         preferences.synchronize()
         let callback = completion; completion = nil
+        measurementStarted = nil
         last = result
         retryAt = now + max(0, min(60, 60 - Date().timeIntervalSince(result.finishedAt)))
         if result.bytes == nil {

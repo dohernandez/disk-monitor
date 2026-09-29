@@ -415,3 +415,19 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
   changes are performed in macOS. Never use real cache exclusion or reindexing as a
   fixture test. Native panel/drag/Settings integration remains manual acceptance;
   offscreen rendering does not establish those interactions.
+
+## Fixed protected-folder access status
+
+- Fixtures verify registration enabled → checking, successful preflight → ready,
+  request → connecting, bridge response → scanning, complete result → verified.
+- Timeout and unconfirmed completion override previous success. A successful folder
+  does not hide another folder's permission failure. Late bridge messages cannot
+  restore a finished spinner. Cancellation does not verify access or hide uncertainty.
+- A fresh FolderAccess has no verified state; startup checks again. Removing tracked
+  roots filters their feedback. Ordinary readable folders do not create access cards.
+- Existing permission-return and exactly-once resumption fixtures must still pass.
+- Manually verify the panel remains below the header while scrolling the folder list,
+  shows current folder/time after a real successful scan, and warns after access is
+  revoked or the reader cannot connect. Do not grant/reset live permissions merely
+  for fixtures. Offscreen example-state rendering verifies layout, not OS permission
+  application or live scanner behavior.

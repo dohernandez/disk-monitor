@@ -28,11 +28,24 @@ let sizes: [(String, Int64)] = [
     (model.home + "/Library/Containers/com.docker.docker/Data/vms", 9)]
 for (path, size) in sizes {model.readings[path] = Reading(bytes: size*gib, previous: size*gib - 104_857_600, date: now)}
 
+let accessPreview = CommandLine.arguments.contains("access")
+let accessRoot = Root(path: model.spotlightPath, title: "Spotlight index")
+let accessExamples: [FolderAccess.Activity] = [.checking, .connecting, .scanning, .verified(now),
+    .attention("Scanner connection timed out. If permissions are enabled, quit and reopen Disk Monitor, then retry.")]
 let exclusionsPreview = CommandLine.arguments.contains("exclusions")
 model.readings[model.nixStorePath] = Reading(bytes: 7*gib, date: now)
 model.addSpotlightSuggestions([URL(fileURLWithPath: "/Users/example/Projects/worktree")])
 let spotlightPreview = CommandLine.arguments.contains("spotlight")
-let content: AnyView = exclusionsPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
+let content: AnyView = accessPreview ? AnyView(VStack(alignment: .leading, spacing: 14) {
+    Text("Protected-folder status · example states").font(.headline).padding(.horizontal, 12)
+    ForEach(accessExamples.indices, id: \.self) { index in
+        FolderAccessStatusPanel(observations: [FolderAccess.Observation(root: accessRoot, activity: accessExamples[index])])
+    }
+    FolderAccessStatusPanel(observations: [
+        FolderAccess.Observation(root: Root(path: "/Users/example/Library/Caches", title: "Library caches"), activity: .attention("Full Disk Access is required.")),
+        FolderAccess.Observation(root: accessRoot, activity: .verified(now))])
+    Spacer(minLength: 0)
+}.padding(.vertical, 20).frame(width: 440, height: 710).foregroundStyle(Palette.primary).background(Palette.background)) : exclusionsPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
     Text("Caches & tools").font(.headline)
     SpotlightExclusionSettings(model: model)
     Spacer(minLength: 0)
@@ -41,7 +54,7 @@ let content: AnyView = exclusionsPreview ? AnyView(VStack(alignment: .leading, s
     FolderRow(model: model, root: Root(path: model.spotlightPath, title: "Spotlight index"))
 }.padding(16).frame(width: 440, height: 150).foregroundStyle(Palette.primary).background(Palette.background)) : AnyView(Dashboard(model: model))
 let view = NSHostingView(rootView: content.environment(\.controlActiveState, .active))
-view.frame = NSRect(x: 0, y: 0, width: 440, height: exclusionsPreview ? 780 : spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
+view.frame = NSRect(x: 0, y: 0, width: 440, height: accessPreview ? 710 : exclusionsPreview ? 780 : spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
 let window = PreviewWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
 window.contentView = view
 window.appearance = NSAppearance(named: .darkAqua)

@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
         str(temporary / "main.swift"), *app_sources, "-F", str(sparkle), "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", str(sparkle), "-o", str(binary), "-framework", "Cocoa", "-framework", "SwiftUI"], check=True)
     pages = ["dashboard", "settings"] if APP == "disk-monitor" else ["usage", "subscriptions"]
     pages = sys.argv[1:] or pages
-    assert all(page in ["dashboard", "settings", "spotlight", "exclusions", "usage", "subscriptions"] for page in pages)
+    assert all(page in ["dashboard", "settings", "spotlight", "exclusions", "access", "usage", "subscriptions"] for page in pages)
     for page in pages:
         output = ROOT / "docs/screenshots" / (page + ".png")
         subprocess.run([str(binary), page, str(output)], check=True, timeout=30)

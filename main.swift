@@ -853,6 +853,34 @@ struct LargestFolders: View {
         }
     }
 }
+struct FolderAccessStatusPanel: View {
+    let observations: [FolderAccess.Observation]
+    var body: some View {
+        if let observation = observations.first {
+            let activity = observation.activity
+            let warning = { if case .attention = activity { return true }; return false }()
+            let verified = { if case .verified = activity { return true }; return false }()
+            let inProgress = activity == .checking || activity == .connecting || activity == .scanning
+            let color = warning ? Palette.uncertainty : verified ? Palette.accent : Palette.secondary
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    if inProgress { ProgressView().controlSize(.small) }
+                    else { Image(systemName: warning ? "exclamationmark.circle.fill" : verified ? "checkmark.circle.fill" : "info.circle") }
+                    Text(activity.title).font(.system(size: 12, weight: .semibold))
+                }.foregroundStyle(color)
+                Text(observation.root.title + " · " + activity.detail)
+                    .font(.system(size: 10)).foregroundStyle(Palette.primary).lineLimit(3)
+                    .help(observation.root.title + " · " + activity.detail)
+                if observations.count > 1 {
+                    let others = observations.dropFirst().map { $0.root.title + ": " + $0.activity.title }.joined(separator: " · ")
+                    Text(others).font(.system(size: 9)).foregroundStyle(Palette.secondary).lineLimit(2).help(others)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                .background(color.opacity(0.08))
+            Divider()
+        }
+    }
+}
 struct AlertPanel: View {
     @ObservedObject var model: Model
     var body: some View {
@@ -1153,6 +1181,7 @@ struct Dashboard: View {
                     }.font(.system(size: 12)).foregroundStyle(Palette.secondary).padding(20)
                 }
             } else {
+            FolderAccessStatusPanel(observations: model.folderAccess.accessObservations(for: model.trackedRoots))
             ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -1606,10 +1635,12 @@ if CommandLine.arguments.contains("--self-test") {
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(allowed?.count == 1 && ops.isEmpty, "Readable folders never need elevated I/O")
+    precondition(gate.accessObservations(for: [ordinary]).isEmpty, "Ordinary readable folders need no protected-access banner")
     check = .permissionRequired; allowed = nil
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(allowed!.isEmpty && gate.requirements[ordinary.path] == .fileAccess && ops.isEmpty)
+    precondition(gate.accessObservations(for: [ordinary]).first?.activity.priority == 0)
     let anotherDenied = Root(path: root.appendingPathComponent("another-denied").path, title: "Another denied folder")
     gate.reportDenied(anotherDenied)
     gate.reportDenied(anotherDenied)
@@ -1619,6 +1650,7 @@ if CommandLine.arguments.contains("--self-test") {
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }
     drainUntil { allowed != nil }
     precondition(allowed!.count == 1 && gate.requirements[ordinary.path] == nil)
+    precondition(gate.accessObservations(for: [ordinary]).first?.activity == .ready, "A passed check is not a successful complete scan")
     precondition(gate.permissionGroups[0].roots.map(\.path) == [anotherDenied.path], "Recovery removes only the recovered folder")
     gate.cancel(anotherDenied.path)
     precondition(gate.permissionGroups.isEmpty)
@@ -1681,13 +1713,26 @@ if CommandLine.arguments.contains("--self-test") {
     allowed = nil
     gate.prepare([protectedRoot], requestIfNeeded: true) { allowed = $0 }
     replies.removeFirst()(BridgeMessage(event: "status", status: 1))
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .checking, "Enabled registration alone must not confirm access")
     replies.removeFirst()(BridgeMessage(event: "access", status: 0))
     precondition(allowed?.map(\.path) == [indexPath] && gate.requirements[indexPath] == nil)
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .ready)
     var elevated: FolderAccess.Result?
     gate.measure(protectedRoot, scanner: Scanner()) { elevated = $0 }
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .connecting)
+    let successfulReply = replies.removeFirst()
+    successfulReply(BridgeMessage(event: "measuring"))
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .scanning)
     let stamp = Date(timeIntervalSinceNow: -5)
-    replies.removeFirst()(BridgeMessage(event: "result", measurement: Measurement(bytes: 1234, finishedAt: stamp)))
+    successfulReply(BridgeMessage(event: "result", measurement: Measurement(bytes: 1234, finishedAt: stamp)))
     precondition(elevated?.scan.values[indexPath] == 1234 && elevated?.date == stamp && elevated?.elevated == true)
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .verified(stamp))
+    successfulReply(BridgeMessage(event: "measuring"))
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .verified(stamp), "Late replies must not restore a completed scan's spinner")
+    gate.reportDenied(ordinary)
+    precondition(gate.accessObservations(for: [protectedRoot, ordinary]).first?.id == ordinary.path, "One working folder must not hide another folder's access failure")
+    gate.cancel(ordinary.path)
+    precondition(gate.accessObservations(for: []).isEmpty, "Untracked folders must not leave stale status")
     // One return from native approval resumes exactly one pending folder.
     reader.setEnabled(true)
     replies.removeFirst()(BridgeMessage(event: "status", status: 2))
@@ -1727,6 +1772,8 @@ if CommandLine.arguments.contains("--self-test") {
     gate.willOpenSettings(); gate.returnedFromSettings()
     replies.removeFirst()(BridgeMessage(event: "launchFailed", error: "Scanner connection timed out"))
     precondition(gate.requirements[indexPath] == .failed("Scanner connection timed out"))
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity.detail.contains("Scanner connection timed out") == true)
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity.priority == 0, "Connection failure overrides earlier scan success")
     precondition(gate.failedBeforeScan.contains(indexPath) && resumedRoots.count == 1)
     // Background approval alone must not invent an FDA/restart diagnosis.
     precondition(gate.restartGuidance(for: indexPath) == nil)
@@ -1769,12 +1816,15 @@ if CommandLine.arguments.contains("--self-test") {
         var restartReplies: [(BridgeMessage) -> Void] = []
         let freshReader = PrivilegedFolderReader(preferences: prefs, operation: { _, reply in restartReplies.append(reply) })
         let freshGate = FolderAccess(preferences: prefs, reader: freshReader, probe: { _ in .available })
+        precondition(freshGate.accessObservations(for: [protectedRoot]).isEmpty, "Access success is never restored from preferences")
         var checked = false
         freshGate.synchronize([protectedRoot, ordinary], checkingAccess: true) { checked = true }
+        precondition(freshGate.accessObservations(for: [protectedRoot]).first?.activity == .checking)
         restartReplies.removeFirst()(BridgeMessage(event: "status", status: 1))
         restartReplies.removeFirst()(BridgeMessage(event: "access", status: 0))
         drainUntil { checked }
         precondition(freshReader.canAutomaticallyMeasure && freshGate.requirements.isEmpty)
+        precondition(freshGate.accessObservations(for: [protectedRoot]).first?.activity == .ready)
         precondition(freshGate.restartGuidance(for: indexPath) == nil && freshGate.restartGuidance(for: ordinary.path) == nil)
     }
     // A new uncached measurement is cancelled through the same folder owner.
@@ -1787,11 +1837,16 @@ if CommandLine.arguments.contains("--self-test") {
     elevated = nil
     gate.measure(protectedRoot, scanner: Scanner()) { elevated = $0 }
     let scanReply = replies.removeFirst()
+    scanReply(BridgeMessage(event: "uncertain"))
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity.priority == 0, "Lost connection cannot remain a healthy spinner")
+    gate.cancelPending()
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity.priority == 0, "Stop cannot hide unconfirmed completion")
     gate.cancelMeasurement()
     precondition(ops.last == "cancel" && elevated == nil)
     replies.removeFirst()(BridgeMessage(event: "cancelRequested"))
     scanReply(BridgeMessage(event: "result", measurement: Measurement(bytes: 9999, finishedAt: Date())))
     precondition(elevated?.scan.error == "Cancelled" && elevated?.scan.values.isEmpty == true)
+    precondition(gate.accessObservations(for: [protectedRoot]).first?.activity == .stopped, "Cancellation is not access confirmation")
     check = .permissionRequired; allowed = nil
     gate.prepare([ordinary], requestIfNeeded: true) { allowed = $0 }; gate.cancel(ordinary.path)
     drainUntil { allowed != nil }

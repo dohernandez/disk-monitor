@@ -194,3 +194,11 @@ Open Spotlight settings, choose **Search Privacy** (or **Spotlight Privacy** on 
 macOS), and add or drag the folders you want excluded. The app saves custom suggestions;
 it does not report them as applied exclusions. Confirm or remove actual exclusions
 in macOS. See [the exclusion workflow](docs/USAGE.md#spotlight-exclusion-suggestions).
+
+## Visible protected-folder access status
+
+A status panel below the dashboard header stays visible while you scroll. It
+distinguishes access checks, connection attempts, scans in progress and successful
+scan results. **Scan succeeded · access verified** includes the measurement time
+and folder name. Failures remain visible even if macOS permission switches look
+enabled. This is current-session evidence, not a promise that every folder is readable.

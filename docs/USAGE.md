@@ -284,3 +284,30 @@ Custom suggestions save immediately and survive app restarts and updates. Missin
 custom paths stay visible as **Folder not found**, with copy/remove actions.
 
 ![Spotlight exclusion suggestions with example folders](screenshots/exclusions.png)
+
+## Protected-folder access status
+
+The dashboard keeps a compact status panel below its header, outside the scrolling
+folder list. It covers the protected reader, Library caches, and other folders that
+have requested access during this app session. Existing grouped permission actions
+remain in Needs Attention.
+
+- **Checking folder access…**: the startup or requested access check is still running.
+- **Access check passed**: the preflight succeeded; this does not prove a full scan.
+- **Connecting to folder reader…**: a measurement was requested, but the reader has
+  not yet responded. This is not shown as a healthy scan.
+- **Scan in progress**: the privileged reader has connected and received the scan
+  request, or an ordinary scan was dispatched. The complete result is still pending.
+- **Scan succeeded · access verified**: a complete successful measurement was
+  returned during this app session. Its time and folder name are shown.
+- **Folder access needs attention**: access or measurement failed, or scanner
+  completion is unconfirmed. The reason remains visible even when macOS displays
+  enabled permission switches. An unconfirmed operation retains its existing Mac
+  restart guidance.
+
+Failures take priority over successful folders; other observed folders have a
+compact summary with full text on hover. Cancelling a scan does not verify access.
+Old saved sizes never produce a success indication on launch. Startup, permission
+requests, scan timing, registration and recovery behavior are unchanged.
+
+![Protected-folder status examples](screenshots/access.png)
