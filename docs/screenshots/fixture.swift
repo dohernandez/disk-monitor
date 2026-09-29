@@ -8,8 +8,10 @@ final class PreviewWindow: NSWindow {
 let application = PreviewApplication.shared
 application.setActivationPolicy(.prohibited)
 application.appearance = NSAppearance(named: .darkAqua)
-let preferences = UserDefaults(suiteName: "MonitorReadme." + UUID().uuidString)!
-let model = Model(home: "/Users/example", preferences: preferences, spotlightPath: "/System/Volumes/Data/.Spotlight-V100")
+let previewSuite = "MonitorReadme." + UUID().uuidString
+let preferences = UserDefaults(suiteName: previewSuite)!
+defer { preferences.removePersistentDomain(forName: previewSuite) }
+let model = Model(nixStorePath: "/nix/store", home: "/Users/example", preferences: preferences, spotlightPath: "/System/Volumes/Data/.Spotlight-V100")
 let now = Date()
 model.errors[model.spotlightPath] = "du: /System/Volumes/Data/.Spotlight-V100: Permission denied"
 model.protectedPaths.insert(model.spotlightPath)
@@ -26,13 +28,20 @@ let sizes: [(String, Int64)] = [
     (model.home + "/Library/Containers/com.docker.docker/Data/vms", 9)]
 for (path, size) in sizes {model.readings[path] = Reading(bytes: size*gib, previous: size*gib - 104_857_600, date: now)}
 
+let exclusionsPreview = CommandLine.arguments.contains("exclusions")
+model.readings[model.nixStorePath] = Reading(bytes: 7*gib, date: now)
+model.addSpotlightSuggestions([URL(fileURLWithPath: "/Users/example/Projects/worktree")])
 let spotlightPreview = CommandLine.arguments.contains("spotlight")
-let content: AnyView = spotlightPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
+let content: AnyView = exclusionsPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
+    Text("Caches & tools").font(.headline)
+    SpotlightExclusionSettings(model: model)
+    Spacer(minLength: 0)
+}.font(.system(size: 11)).padding(20).frame(width: 440, height: 780).foregroundStyle(Palette.primary).background(Palette.background)) : spotlightPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
     Text("SHARED CACHES & TOOLS").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.secondary)
     FolderRow(model: model, root: Root(path: model.spotlightPath, title: "Spotlight index"))
 }.padding(16).frame(width: 440, height: 150).foregroundStyle(Palette.primary).background(Palette.background)) : AnyView(Dashboard(model: model))
 let view = NSHostingView(rootView: content.environment(\.controlActiveState, .active))
-view.frame = NSRect(x: 0, y: 0, width: 440, height: spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
+view.frame = NSRect(x: 0, y: 0, width: 440, height: exclusionsPreview ? 780 : spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
 let window = PreviewWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
 window.contentView = view
 window.appearance = NSAppearance(named: .darkAqua)

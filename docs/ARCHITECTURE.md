@@ -421,3 +421,17 @@ requirements; access checks, Settings-return handling and scan resumption remain
 per folder. Recovery or cancellation removes only the affected folder from its group.
 
 Pending updates use Sparkle’s standard-user-driver gentle reminders and updater callbacks. A separate blue menu-bar arrow coexists with disk warning badges; a popup card and Settings action open the existing Sparkle prompt. Install-on-quit state comes only from Sparkle’s callback. No extra polling, forced restart, permission prompt or custom installer is added; daily scheduling and signed-feed/download verification remain Sparkle-owned.
+
+## Spotlight exclusion suggestions
+
+`Model.spotlightSuggestedCaches` derives existing directories from `defaultCacheOptions`
+and custom cache roots, independently of tracking exclusions, omitting the index.
+`SpotlightSuggestions` normalizes absolute paths and deduplicates custom selections.
+Custom suggestions live in the separate `spotlightCustomSuggestions` UserDefaults
+string array; no readings JSON migration is needed. Older versions ignore this key.
+
+`SpotlightExclusionSettings` offers folder URL dragging, Finder/copy actions and a
+Settings link, following Apple's Search Privacy workflow. The app cannot verify
+that a suggestion was applied and never presents it as confirmed. No private
+Spotlight database writes, filesystem markers, privileged operations or new access
+requests are used. Scan/access behavior and tracking checkboxes remain independent.
