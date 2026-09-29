@@ -419,3 +419,5 @@ approval and Full Disk Access. Each card lists its affected pending folders and
 has one Settings action. This grouping is derived from the existing per-folder
 requirements; access checks, Settings-return handling and scan resumption remain
 per folder. Recovery or cancellation removes only the affected folder from its group.
+
+Pending updates use Sparkle’s standard-user-driver gentle reminders and updater callbacks. A separate blue menu-bar arrow coexists with disk warning badges; a popup card and Settings action open the existing Sparkle prompt. Install-on-quit state comes only from Sparkle’s callback. No extra polling, forced restart, permission prompt or custom installer is added; daily scheduling and signed-feed/download verification remain Sparkle-owned.
