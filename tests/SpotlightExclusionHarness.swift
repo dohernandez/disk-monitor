@@ -3,6 +3,7 @@
 #if DISK_MONITOR_TESTS
 import Cocoa
 import ApplicationServices
+import SwiftUI
 
 // Development-only live validation (docs/SPOTLIGHT-AUTOMATION.md). Opens only the
 // exclusion window with isolated preferences and readings: no status item, updater,
@@ -48,13 +49,21 @@ enum SpotlightExclusionHarness {
     }
     final class Delegate: NSObject, NSApplicationDelegate {
         let environment: Environment
+        var testWindow: NSWindow?
         init(_ environment: Environment) { self.environment = environment }
         func applicationDidFinishLaunching(_ notification: Notification) {
-            let editor = SpotlightExclusionWindow.shared
-            editor.controls.mutationScope = environment.root
-            editor.controls.usesTestList = true; editor.controls.exactList = SpotlightExclusionHarness.sudoList
-            editor.show(model: environment.model)
-            editor.window?.title = "Disk Monitor — Spotlight exclusions (test mode)"
+            // The same inline Settings section the app shows, hosted in a test-only window.
+            let controls = SpotlightExclusionControls.shared
+            controls.mutationScope = environment.root
+            controls.usesTestList = true; controls.exactList = SpotlightExclusionHarness.sudoList
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 420), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "Disk Monitor — Spotlight exclusions (test mode)"
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = NSHostingView(rootView: SpotlightExclusionSettings(model: environment.model, controls: controls, expanded: true)
+                .padding(16).font(.system(size: 11)).foregroundStyle(Palette.primary).background(Palette.background))
+            window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+            testWindow = window
             if CommandLine.arguments.contains(closeFlag) {
                 DispatchQueue.global(qos: .userInitiated).async {
                     let notes = SpotlightPrivacyAutomation(cancelled: stopped).closeLeftovers()
@@ -82,7 +91,7 @@ enum SpotlightExclusionHarness {
         func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
         func applicationWillTerminate(_ notification: Notification) {
             stop.lock(); stopping = true; stop.unlock()
-            SpotlightExclusionWindow.shared.controls.cancel(); environment.cleanup()
+            SpotlightExclusionControls.shared.cancel(); environment.cleanup()
         }
     }
     // Headless live run: each step goes through the same verified automation as the

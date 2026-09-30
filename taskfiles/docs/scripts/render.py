@@ -33,8 +33,6 @@ if APP == "disk-monitor":
     source = source.replace('FileManager.default.fileExists(atPath: root.path, isDirectory: &directory) && directory.boolValue',
         'readings[root.path] != nil')
     source = source.replace('let exists = FileManager.default.fileExists(atPath: root.path)', 'let exists = true')
-    source = source.replace('@State private var expanded = false',
-        '@State private var expanded = CommandLine.arguments.contains("exclusions")')
 else:
     assert source.count('@State private var page="Usage"') == 1
     source = source.replace('@State private var page="Usage"',

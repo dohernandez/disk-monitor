@@ -38,8 +38,8 @@ at the next check. Existing scanner/permissions logic is unchanged.
 
 `--spotlight-exclusion-test` exists only in test builds (`task build:app -- --test`;
 `tests/SpotlightExclusionHarness.swift`, `-D DISK_MONITOR_TESTS`). Release builds contain
-none of it, and `task common:test` fails if they could. It opens just the exclusion window
-before normal startup: no status item, updater, scanner registration, scans or timers.
+none of it, and `task common:test` fails if they could. It shows the same Settings section
+in a test-only window before normal startup: no status item, updater, scanner registration, scans or timers.
 Preferences and readings are temporary and removed on quit. Candidates are disposable
 fixtures in `$TMPDIR/DiskMonitor-exclusion-fixtures` (duplicate `Cache` basenames, spaces,
 Unicode, `excluded-parent/child`); changes outside that folder are refused before any

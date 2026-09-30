@@ -933,30 +933,49 @@ struct FolderSettings: View {
             Button("Add folders…") { model.chooseRoots(asProject: true) }
             Divider()
             Text("Caches & tools").fontWeight(.semibold)
-            ForEach(model.defaultCacheOptions.filter { candidate in !model.projectRoots.contains { $0.path == candidate.path } && !model.customCaches.contains { $0.path == candidate.path } }) { root in
-                Toggle(root.title, isOn: Binding(get: {!model.excludedPaths.contains(root.path)}, set: {enabled in
-                    model.setCacheEnabled(root, enabled)
-                }))
-            }
-            ForEach(model.customCaches) { root in
-                HStack { Text(root.title); Spacer(); Button("Remove") {model.stopTracking(root.path)} }.help(root.path)
-            }
-            Text("Every folder uses the same access and scan flow. macOS asks for any supported permissions when needed. See Info for protected-folder access.").font(.caption).foregroundStyle(Palette.secondary)
-            Button("Add cache folders…") {model.chooseRoots(asProject: false)}
+            FolderChecklist(
+                defaults: model.defaultCacheOptions.filter { candidate in !model.projectRoots.contains { $0.path == candidate.path } && !model.customCaches.contains { $0.path == candidate.path } },
+                isOn: { !model.excludedPaths.contains($0.path) }, setOn: { model.setCacheEnabled($0, $1) },
+                added: model.customCaches, remove: { model.stopTracking($0.path) },
+                caption: "Every folder uses the same access and scan flow. macOS asks for any supported permissions when needed. See Info for protected-folder access.",
+                addTitle: "Add cache folders…", add: { model.chooseRoots(asProject: false) })
             Divider()
             SpotlightExclusionSettings(model: model)
         }.font(.system(size: 11))
     }
 }
-struct SpotlightExclusionSettings: View {
-    @ObservedObject var model: Model
+// One checklist for folder sections (Caches & tools, Spotlight exclusions): default folders
+// as checkboxes, added folders with Remove, a caption and an Add button. Emits its rows
+// into the parent stack so both sections share spacing and look.
+struct FolderChecklist: View {
+    let defaults: [Root]
+    let isOn: (Root) -> Bool
+    let setOn: (Root, Bool) -> Void
+    var disabled: (Root) -> Bool = { _ in false }
+    let added: [Root]
+    let remove: (Root) -> Void
+    var removeDisabled = false
+    let caption: String
+    var notice: String? = nil
+    var noticeAction: (String, () -> Void)? = nil
+    let addTitle: String
+    var addDisabled = false
+    let add: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Spotlight exclusions").fontWeight(.semibold)
-            Text("Manage which folders Spotlight searches. Size tracking stays unchanged.")
-                .foregroundStyle(Palette.secondary)
-            Button("Manage exclusions…") { SpotlightExclusionWindow.shared.show(model: model) }
+        ForEach(defaults) { root in
+            Toggle(root.title, isOn: Binding(get: { isOn(root) }, set: { setOn(root, $0) })).disabled(disabled(root))
         }
+        ForEach(added) { root in
+            HStack { Text(root.title); Spacer(); Button("Remove") { remove(root) }.disabled(removeDisabled) }.help(root.path)
+        }
+        Text(caption).font(.caption).foregroundStyle(Palette.secondary)
+        if let notice {
+            HStack {
+                Text(notice).font(.caption).foregroundStyle(Palette.uncertainty).textSelection(.enabled)
+                if let noticeAction { Button(noticeAction.0) { noticeAction.1() } }
+            }
+        }
+        Button(addTitle) { add() }.disabled(addDisabled)
     }
 }
 struct RefreshSettings: View {
@@ -1225,6 +1244,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             ])
         }
         AppUpdates.shared.onChange = { [weak self] in self?.updateStatusIcon() }
+        NotificationCenter.default.addObserver(forName: .diskMonitorReopenPopover, object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.popover.isShown else { return }
+            self.toggle()
+        }
         model.onStatus = { [weak self] in self?.updateStatusIcon() }
         model.onStartupAccessNeeded = { [weak self] in
             guard let self, !self.popover.isShown else { return }

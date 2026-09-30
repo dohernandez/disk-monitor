@@ -257,26 +257,19 @@ you may need to approve it again. Saved measurements are retained.
 
 ## Spotlight exclusion controls
 
-Open **Settings → Caches & tools → Manage exclusions…**. A separate window remains
-open while Disk Monitor operates macOS Search Privacy. Choose **Allow Accessibility…**
-if needed, then **Refresh exclusions**. This permission is separate from scanner
-access and is requested only for this feature.
+Open **Settings** and expand **Spotlight exclusions**, below Caches & tools. It uses the
+same layout: default folders have checkboxes, folders you add have **Remove**, and
+**Add folders…** chooses another folder and excludes it. Checked means the folder is
+hidden from Spotlight search; Disk Monitor keeps measuring it.
 
-Once macOS exposes a complete list with exact folder paths, check a folder to exclude
-it and uncheck it to include it. **Exclude another folder…** selects a folder and
-requests the real operation; it no longer just saves a suggestion. Tracking and
-measurements remain independent. Previously saved custom folders remain available.
-
-Changes bring System Settings forward. Keep it in front until the operation ends.
-Disk Monitor only reports success after reading the expected result back. Unknown
-means the current state could not be verified, not that a folder is included.
-A parent exclusion must be removed in macOS; the app will not silently remove it
-when unchecking a child. Stop or closing the window stops further automation but
-cannot undo an operation already accepted by macOS. Refresh after an error.
-
-This automation candidate still requires live acceptance before release; see
-[implementation and validation](SPOTLIGHT-AUTOMATION.md). It may reject unsupported
-UI layouts or languages. No monitored files are renamed, marked or deleted.
+The list comes from the Spotlight scanner, so "Spotlight index" must be checked under
+Caches & tools. Reading needs no other permission. Changing a folder needs Accessibility
+(**Allow…** appears once): Disk Monitor opens System Settings → Search Privacy, applies the
+change, confirms it with the scanner, and reopens Settings. Keep your hands off for those
+few seconds. **Remove** on an added folder includes it in Spotlight again and drops it from
+the list. A folder excluded through a parent folder can't be unchecked on its own, and a
+removal is refused when two excluded folders share a name; change those in System
+Settings. "Unknown" means the state could not be read, not that a folder is included.
 
 ## Protected-folder access status
 
