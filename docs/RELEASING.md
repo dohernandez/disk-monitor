@@ -32,6 +32,9 @@ Manual dispatch publishes only when run from `main`.
 Every PR runs:
 
 - **Commit signatures:** every new PR commit must be verified by GitHub.
+- **Lint:** the same tasks as the git hooks: `task common:lint`, `task common:check:task-cli-args`
+  and `task common:check:pr-messages` (every new commit message and the PR description; API-made
+  commits skip local hooks). Release jobs wait for it.
 - **Test and build (arm64):** native macOS 15 build, release helper tests, native
   self-tests, signature integrity, DMG creation/verification and mounted-app checks.
 - **Test and build (x86_64):** the same checks on the Intel macOS 15 runner.
@@ -102,7 +105,8 @@ The intended rules live in `.github/main-ruleset.json`:
 
 - PR required; zero approving reviews for the current solo-maintainer workflow.
 - Verified signatures required for incoming commits.
-- All three checks above required from the GitHub Actions integration.
+- All four checks above required from the GitHub Actions integration. Lint was added to the
+  committed ruleset on 2026-09-30; applying it live (`task release:rules`) needs Darien's OK.
 - Branch must be up to date before merging; review conversations must be resolved.
 - No force-pushes, deletions, or administrator bypass list for `main`.
 

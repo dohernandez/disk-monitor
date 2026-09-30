@@ -43,6 +43,16 @@ class ShippedSourceTests(unittest.TestCase):
                 with self.subTest(file=name, word=word):
                     self.assertNotIn(word, source)
 
+    def test_every_release_source_is_checked(self):
+        # Every repository Swift file build.sh compiles into a release app, scanner or bridge must be
+        # in SHIPPED, so a new shipped file cannot bypass the checks above. Test builds add only tests/.
+        build = (ROOT / 'taskfiles/build/scripts/build.sh').read_text()
+        compiled = {name for line in build.splitlines() if 'swiftc -D DISK_MONITOR' in line
+                    for name in re.findall(r'(?<![\w$/"])([A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*\.swift)', line)
+                    if not name.startswith('tests/')}
+        self.assertTrue(compiled)
+        self.assertEqual(compiled - set(SHIPPED), set())
+
     def test_main_reads_only_package_verification_arguments(self):
         source = release_source((ROOT / 'main.swift').read_text())
         reads = re.findall(r'CommandLine\.arguments\.contains\("([^"]+)"\)', source)

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only preflight. Never installs, registers, prompts, or changes trust."""
+"""Read-only scanner replacement preflight (task build:check:scanner-replacement).
+Never installs, registers, prompts, or changes trust.
+
+Usage: python3 taskfiles/build/scripts/verify_scanner_replacement.py PREVIOUS_APP REPLACEMENT_APP
+"""
 import plistlib
 import subprocess
 import sys
@@ -40,7 +44,7 @@ def verify(previous, replacement):
 if __name__ == '__main__':
     try:
         if len(sys.argv) != 3:
-            raise ValueError('Usage: verify_replacement.py PREVIOUS_APP REPLACEMENT_APP')
+            raise ValueError('Usage: verify_scanner_replacement.py PREVIOUS_APP REPLACEMENT_APP')
         print(verify(*sys.argv[1:]))
     except (ValueError, OSError, KeyError) as error:
         sys.exit(str(error))

@@ -24,9 +24,9 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
-        files: \.(py|swift|sh)$
-      - id: commit-message
-        name: conventional commit, no AI attribution (task common:check:commit-message)
-        entry: task common:check:commit-message --
+        files: \.(py|swift|sh|ya?ml|json|plist)$
+      - id: commit-msg
+        name: conventional commit, no AI attribution (task common:check:commit-msg)
+        entry: task common:check:commit-msg --
         language: system
         stages: [commit-msg]

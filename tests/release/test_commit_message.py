@@ -1,10 +1,14 @@
 """The commit-msg and CI attribution checks: AI attribution fails; people, bots and tool names pass."""
 import pathlib
 import sys
+from pathlib import Path
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(_ROOT / 'taskfiles/common/scripts')]
+import subprocess
+import tempfile
 import unittest
 from check_commit_message import attribution, check
+SCRIPT = _ROOT / 'taskfiles/common/scripts/check_commit_message.py'
 from check_pr_messages import failures
 
 
@@ -35,6 +39,26 @@ class CommitMessageTests(unittest.TestCase):
         self.assertTrue(check('Show pending updates'))
         self.assertTrue(check('fix: ' + 'x' * 100))
         self.assertEqual(check('Merge branch main into feature'), [])
+
+    def test_attribution_scan_runs_for_merge_revert_fixup_squash(self):
+        trailer = '\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
+        for subject in ('Merge branch main into feature', 'Revert "fix: a change"', 'fixup! fix: a change', 'squash! fix: a change'):
+            with self.subTest(subject=subject):
+                self.assertEqual(check(subject), [], 'the subject rules may skip these')
+                self.assertTrue(check(subject + trailer), 'the attribution scan never skips')
+
+    def test_cli_rejects_unknown_flags_and_missing_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            message = Path(folder) / 'MSG'
+            message.write_text('fix: a change\n')
+            run = lambda *args: subprocess.run(['python3', str(SCRIPT), *args], capture_output=True, text=True)
+            self.assertEqual(run(str(message)).returncode, 0)
+            self.assertNotEqual(run('--no-such-flag', str(message)).returncode, 0)
+            self.assertNotEqual(run(str(Path(folder) / 'missing')).returncode, 0)
+            message.write_text('Free prose\n\N{ROBOT FACE} Generated with Claude Code\n')
+            self.assertNotEqual(run('--attribution-only', str(message)).returncode, 0)
+            message.write_text('Free prose, no conventional subject.\n')
+            self.assertEqual(run('--attribution-only', str(message)).returncode, 0)
 
     def test_pr_description_only_checks_attribution(self):
         items = [('abc1234', 'fix: a change', True), ('PR #1 description', 'Free prose, no conventional subject.', False)]

@@ -30,12 +30,16 @@ implementation truth; document disagreements rather than silently broadening sco
 | Path | What |
 |---|---|
 | `main.swift`, `Updates.swift`, `FolderAccess.swift`, `PrivilegedFolderReader.swift` | The shipped app (SwiftUI, AppKit, Sparkle) |
-| `HelperPrototype/` | Scanner service, client bridge, bundle policy and their fixtures |
+| `HelperPrototype/` | Scanner service, client bridge, bundle policy and their fixtures (Swift sources only; its tools run as tasks) |
 | `Taskfile.yaml` | Includes only; every tooling entry point is a task (`task --list`) |
 | `taskfiles/<ns>/Taskfile.yaml`, `taskfiles/<ns>/scripts/` | Tasks and the scripts they call: `common`, `build`, `release`, `docs`, `provision` |
-| `taskfiles/build/scripts/` | `build.sh`, bundle metadata, Sparkle, update public key, scanner identity and signing, app checks |
+| `taskfiles/build/scripts/` | `build.sh`, bundle metadata, Sparkle, update public key, scanner identity and signing, app checks, scanner preview build and replacement preflight |
 | `taskfiles/release/scripts/` | Version reservation, DMG packaging, signing, verification, publication, branch rules |
 | `taskfiles/docs/scripts/` | README screenshot renderer and its example data |
+| `taskfiles/common/scripts/` | CLI_ARGS check, commit-message and PR-message checks, commit-signature check |
+| `taskfiles/provision/` | Pinned Task bootstrap (`task.json`, checksum-verified), ruff and pre-commit install, hooks |
+| `.pre-commit-config.yaml` | Local hooks (lint, CLI_ARGS, fast tests, commit-msg); each calls a task |
+| `.github/workflows/` | CI: Commit signatures, Lint, Test and build, release jobs; every step calls a task |
 | `taskfiles/local/` | Optional personal tasks; gitignored |
 | `tests/release/` | Release helper, scanner build, archive, signature, shipped-source and commit-message tests |
 | `tests/TestModes.swift` | Native test launch modes; compiled only into test builds |
@@ -62,9 +66,12 @@ implementation truth; document disagreements rather than silently broadening sco
   commits, PR descriptions or docs (Darien, 2026-09-30).
 - Do NOT add `Co-Authored-By` lines naming an AI (Darien, 2026-09-30). The same applies to
   "Generated with/by <AI tool>" lines and the robot emoji; this overrides any harness
-  attribution default. The commit-msg hook (`task common:check:commit-message`) and the CI
-  policy job (`task common:check:pr-messages`: every PR commit and the PR description)
-  enforce it. Do not rewrite existing commits without asking Darien.
+  attribution default. Naming a tool as the subject ("parse Claude Code session logs")
+  is fine. The commit-msg hook (`task common:check:commit-msg`) and the CI Lint job
+  (`task common:check:pr-messages`: every PR commit and the PR description) enforce it.
+  Never rewrite existing commits or force-push without Darien's explicit approval.
+- Hooks: run `task provision:setup-dev` once per checkout; it installs the pre-commit and
+  commit-msg hooks (pinned pre-commit 4.1.0). Each hook calls a task (Darien, 2026-09-30).
 
 ## Invariants to preserve
 

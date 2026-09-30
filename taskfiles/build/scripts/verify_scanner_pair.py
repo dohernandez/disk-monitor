@@ -4,8 +4,8 @@ from pathlib import Path
 import plistlib
 import subprocess
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'HelperPrototype'))
-from verify_replacement import checked, requirement
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from verify_scanner_replacement import checked, requirement
 parser = argparse.ArgumentParser(description='Check two signed scanner candidates keep one identity (task build:check:scanner-pair).')
 parser.add_argument('old', type=Path)
 parser.add_argument('new', type=Path)

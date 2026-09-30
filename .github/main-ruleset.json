@@ -48,6 +48,10 @@
           {
             "context": "Test and build (x86_64)",
             "integration_id": 15368
+          },
+          {
+            "context": "Lint",
+            "integration_id": 15368
           }
         ]
       }

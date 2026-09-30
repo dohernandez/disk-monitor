@@ -57,12 +57,12 @@ tasks:
       - python3 ./taskfiles/common/scripts/check_task_cli_args.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"
 
-  check:commit-message:
+  check:commit-msg:
     desc: Check a commit message (conventional commit, no AI attribution); the commit-msg hook runs it
     summary: |
       Usage:
-        task common:check:commit-message -- .git/COMMIT_EDITMSG
-        task common:check:commit-message -- --attribution-only pr-description.md
+        task common:check:commit-msg -- .git/COMMIT_EDITMSG
+        task common:check:commit-msg -- --attribution-only pr-description.md
     cmds:
       - python3 ./taskfiles/common/scripts/check_commit_message.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"

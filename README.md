@@ -55,11 +55,11 @@ task build:check -- "build/Disk Monitor.app"
 open "build/Disk Monitor.app"
 ```
 
-All project tooling runs through [Task](https://taskfile.dev) (`task --list`); install the pinned
-version with `python3 taskfiles/provision/scripts/install_task.py --dir ~/.local/bin` if you don't
-have it. `task build:app -- --test` builds a separate test app in `build/test` with the native
-self-tests; the release app in `build` contains no test launch modes. `task provision:setup-dev`
-installs the pinned lint tool and the git hooks.
+All project tooling runs through [Task](https://taskfile.dev). To contribute, install the pinned
+Task if you don't have it (`python3 taskfiles/provision/scripts/install_task.py --dir ~/.local/bin`),
+run `task provision:setup-dev` once (pinned lint tool and git hooks), then `task --list`.
+`task build:app -- --test` builds a separate test app in `build/test` with the native
+self-tests; the release app in `build` contains no test launch modes.
 
 The app lives in `build/Disk Monitor.app`. Run each command only after the preceding
 one succeeds. When updating a running copy, follow [safe replacement and recovery](docs/DEVELOPMENT.md).

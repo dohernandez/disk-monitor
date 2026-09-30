@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Isolated preview build. Never registers, installs, launches, or edits trust settings.
-Creates a self-signed test identity in its own private keychain, not the login keychain.
+"""Isolated scanner preview build (task build:scanner-preview). Never registers, installs,
+launches, or edits trust settings. Creates a self-signed test identity in its own private
+keychain, not the login keychain.
+
+Usage: PREVIEW_BUILD=<n> python3 taskfiles/build/scripts/scanner_preview.py [OUT_DIR]
 """
-import hashlib, json, os, plistlib, secrets, shlex, subprocess, sys
+import argparse, hashlib, json, os, plistlib, secrets, shlex, subprocess, sys
 from pathlib import Path
-SOURCE = Path(__file__).resolve().parent
+SOURCE = Path(__file__).resolve().parents[3] / 'HelperPrototype'
+_args = argparse.ArgumentParser(description='Isolated scanner preview build (PREVIEW_BUILD env required).')
+_args.add_argument('out_dir', nargs='?', default='/tmp/disk-helper-preview-build')
+OUT_ARG = _args.parse_args().out_dir
 BUILD_NUMBER = os.environ.get('PREVIEW_BUILD', '')
 if not BUILD_NUMBER.isdecimal() or int(BUILD_NUMBER) < 1:
     raise SystemExit('Set PREVIEW_BUILD to an explicit positive, increasing build number.')
-OUT = Path(sys.argv[1] if len(sys.argv) > 1 else '/tmp/disk-helper-preview-build').absolute()
+OUT = Path(OUT_ARG).absolute()
 OUT.mkdir(mode=0o700, parents=True, exist_ok=True)
 if OUT.is_symlink() or OUT.stat().st_uid != os.getuid() or OUT.stat().st_mode & 0o077:
     raise SystemExit('Build directory must be owned by you, mode 0700 and not a link')

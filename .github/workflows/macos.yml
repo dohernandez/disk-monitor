@@ -36,6 +36,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: task common:check:commit-signatures -- --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --pr "$PR_NUMBER"
+
+  # Like genlayer-node's Lint job: CI calls the same tasks the git hooks call.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Install pinned ruff
+        run: task provision:install-ruff
+      - name: Lint Python
+        run: task common:lint
+      - name: Check tasks pass CLI arguments
+        run: task common:check:task-cli-args
+      # API-made commits skip the local commit-msg hook, so CI checks every new
+      # commit message (and the PR description) with the same script.
       - name: Reject AI attribution in commit messages and PR description
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,8 +82,6 @@ jobs:
           persist-credentials: false
       - name: Install pinned Task (checksum-verified bootstrap)
         run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
-      - name: Check tasks pass CLI arguments
-        run: task common:check:task-cli-args
       - name: Validate release logic
         run: task common:test:release -- -v
       - name: Build app
@@ -97,7 +117,7 @@ jobs:
 
   version:
     name: Reserve release version
-    needs: [build, policy]
+    needs: [build, policy, lint]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

@@ -17,7 +17,7 @@ ATTRIBUTION, not naming a tool: there is no bare "AI" or "Claude" match, so a me
 about the Claude observer, a human co-author or a CI [bot] co-author passes. Lines
 starting with '#' are git comment text and are ignored.
 
-Project tooling (task common:check:commit-message); not part of the shipped app.
+Project tooling (task common:check:commit-msg); not part of the shipped app.
 """
 
 import argparse
@@ -68,7 +68,11 @@ def main() -> int:
     ap.add_argument("--attribution-only", action="store_true")
     ap.add_argument("msg_file")
     a = ap.parse_args()
-    text = Path(a.msg_file).read_text()
+    try:
+        text = Path(a.msg_file).read_text()
+    except OSError as error:
+        print(f"commit message: cannot read {a.msg_file}: {error.strerror}", file=sys.stderr)
+        return 2
     errors = attribution(text) if a.attribution_only else check(text)
     for e in errors:
         print(f"commit message: {e}", file=sys.stderr)

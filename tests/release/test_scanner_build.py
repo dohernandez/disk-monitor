@@ -58,8 +58,8 @@ class ScannerBuildTests(unittest.TestCase):
                     calls.append(args)
                     self.assertNotIn('SCANNER_P12_PASSWORD', kwargs['env'])
                     self.assertNotIn('SCANNER_P12_BASE64', kwargs['env'])
-                    if args[0] == 'sh':
-                        raise subprocess.CalledProcessError(1, ['sh', 'build.sh'])
+                    if args[0] == 'bash':
+                        raise subprocess.CalledProcessError(1, ['bash', 'build.sh'])
                     if args[1] == 'create-keychain':
                         Path(args[-1]).touch()
                     if args[1:] == ['list-keychains', '-d', 'user']:

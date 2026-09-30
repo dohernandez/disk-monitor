@@ -11,7 +11,7 @@ tasks:
         task build:app -- --test
         task build:app -- --build-dir /tmp/disk-release --expect-arch arm64
     cmds:
-      - sh taskfiles/build/scripts/build.sh {{.CLI_ARGS}}
+      - bash taskfiles/build/scripts/build.sh {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"
 
   scanner-release:
@@ -72,4 +72,22 @@ tasks:
         task build:check:scanner-pair -- "/tmp/candidate-1/Disk Monitor.app" "/tmp/candidate-2/Disk Monitor.app"
     cmds:
       - python3 ./taskfiles/build/scripts/verify_scanner_pair.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:scanner-replacement:
+    desc: Read-only preflight that a scanner replacement keeps the original signing requirements and raises the build
+    summary: |
+      Usage:
+        task build:check:scanner-replacement -- "/path/previous/Disk Monitor.app" "/path/replacement/Disk Monitor.app"
+    cmds:
+      - python3 ./taskfiles/build/scripts/verify_scanner_replacement.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  scanner-preview:
+    desc: Isolated scanner preview build with a private test identity (PREVIEW_BUILD required; never registers or installs)
+    summary: |
+      Usage:
+        PREVIEW_BUILD=4 task build:scanner-preview -- /tmp/disk-helper-review-build
+    cmds:
+      - python3 ./taskfiles/build/scripts/scanner_preview.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"

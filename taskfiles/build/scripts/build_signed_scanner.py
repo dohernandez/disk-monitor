@@ -69,7 +69,7 @@ def main():
             if fingerprint not in identities.upper():
                 raise RuntimeError('Scanner signing identity does not match the configured public fingerprint')
             env['SCANNER_SIGNING_SHA1'] = fingerprint
-            subprocess.run(['sh', str(ROOT / 'taskfiles/build/scripts/build.sh')], env=env, check=True)
+            subprocess.run(['bash', str(ROOT / 'taskfiles/build/scripts/build.sh')], env=env, check=True)
         finally:
             try:
                 security('list-keychains', '-d', 'user', '-s', *previous)

@@ -1,7 +1,7 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Build Disk Monitor.app (task build:app).
 #
-# Usage: sh taskfiles/build/scripts/build.sh [--test] [--build-dir DIR] [--expect-arch arm64|x86_64]
+# Usage: bash taskfiles/build/scripts/build.sh [--test] [--build-dir DIR] [--expect-arch arm64|x86_64]
 #   --test         Compile the native test launch modes (tests/TestModes.swift) into
 #                  build/test; release builds never contain them. Same as TEST_BUILD=1.
 #   --build-dir    Output folder (default build, or build/test with --test). Same as BUILD_DIR.
