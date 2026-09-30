@@ -14,9 +14,17 @@ class ReleaseTests(unittest.TestCase):
     def test_first_release_is_stable(self):
         self.assertEqual(release.next_tag({}, 'feature/installers'), 'v1.0.0')
     def test_branch_versioning(self):
-        for branch, expected in [('fix/icon', 'v1.2.4'), ('hotfix/icon', 'v1.2.4'), ('docs/readme', 'v1.2.4'), ('feat/alert', 'v1.3.0'), ('feature/alert', 'v1.3.0'), ('major/api', 'v2.0.0'), ('release/api', 'v2.0.0')]:
+        for branch, expected in [('fix/icon', 'v1.2.4'), ('hotfix/icon', 'v1.2.4'), ('deps/sparkle', 'v1.2.4'), ('feat/alert', 'v1.3.0'), ('feature/alert', 'v1.3.0'), ('major/api', 'v2.0.0'), ('release/api', 'v2.0.0')]:
             with self.subTest(branch=branch):
                 self.assertEqual(release.next_tag(['v1.2.3', 'v1.1.9', 'unrelated'], branch), expected)
+    def test_tooling_branches_do_not_release(self):
+        for branch in ('chore/taskfile-tooling', 'ci/lint', 'docs/readme', 'test/fixtures'):
+            with self.subTest(branch=branch):
+                self.assertEqual(release.level(branch), 'none')
+                with self.assertRaisesRegex(ValueError, 'does not release'):
+                    release.next_tag(['v1.2.3'], branch)
+                with self.assertRaisesRegex(ValueError, 'does not release'):
+                    release.next_tag({}, branch)
     def test_semantic_sort_and_initial_floor(self):
         self.assertEqual(release.next_tag(['v1.9.9', 'v1.10.0'], 'fix/a'), 'v1.10.1')
         self.assertEqual(release.next_tag(['v0.1.0'], 'fix/a'), 'v1.0.0')

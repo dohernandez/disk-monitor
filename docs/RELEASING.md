@@ -33,7 +33,8 @@ Every PR runs:
 
 - **Commit signatures:** every new PR commit must be verified by GitHub.
 - **Lint:** the same tasks as the git hooks: `task common:lint`, `task common:check:task-cli-args`,
-  `task common:check:branch-name` (PR branch prefix sets the release bump) and
+  `task common:check:branch-name` (the PR branch prefix sets the release: chore/, ci/, docs/
+  and test/ release nothing and may not touch shipped files) and
   `task common:check:pr-messages`, which runs `task common:check:commit-msg` on every new commit
   and, with `--attribution-only`, on the PR description (API-made commits skip local hooks).
   Release jobs wait for it.

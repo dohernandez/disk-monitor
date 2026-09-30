@@ -2,7 +2,7 @@ version: "3"
 
 tasks:
   version:
-    desc: Reserve or reuse the semantic tag of HEAD on main (reads RELEASE_BRANCH; writes GITHUB_OUTPUT)
+    desc: Reserve or reuse the semantic tag of HEAD on main, or report release=false for chore/ci/docs/test (reads RELEASE_BRANCH; writes GITHUB_OUTPUT)
     cmds:
       - python3 ./taskfiles/release/scripts/release_version.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"

@@ -61,7 +61,9 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           HEAD_REF: ${{ github.head_ref }}
-        run: task common:check:branch-name -- --branch "$HEAD_REF"
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: task common:check:branch-name -- --branch "$HEAD_REF" --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"
       # API-made commits skip the local commit-msg hook, so CI runs the hook's task
       # (common:check:commit-msg) on every new commit message and the PR description.
       - name: Check commit messages and PR description (common:check:commit-msg)
@@ -130,6 +132,7 @@ jobs:
       contents: write
       pull-requests: read
     outputs:
+      release: ${{ steps.version.outputs.release }}
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -149,7 +152,8 @@ jobs:
   package:
     name: Release installers
     needs: [build, version]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # chore/, ci/, docs/ and test/ merges release nothing; publish is skipped with this job.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.version.outputs.release == 'true'
     environment: release
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20

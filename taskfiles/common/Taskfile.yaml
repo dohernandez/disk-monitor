@@ -68,13 +68,14 @@ tasks:
     dir: "{{.ROOT_DIR}}"
 
   check:branch-name:
-    desc: Check that a branch name is <type>/<slug>; its prefix sets the release version bump
+    desc: Check that a branch name is <type>/<slug>; its prefix sets the release (chore/ci/docs/test do not release)
     summary: |
       Without --branch, checks the current git branch (main and detached HEAD are skipped).
 
       Usage:
         task common:check:branch-name
         task common:check:branch-name -- --branch feat/spotlight-exact-exclusions
+        task common:check:branch-name -- --branch chore/x --repo dohernandez/disk-monitor --pr 35
     cmds:
       - python3 ./taskfiles/common/scripts/check_branch_name.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"

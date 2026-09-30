@@ -8,7 +8,13 @@ from pathlib import Path
 
 SEMVER = re.compile(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
 
+# Tooling, CI, docs and test-only branches merge without a release (Darien, 2026-09-30).
+# check_branch_name.py fails such a PR if it touches shipped files.
+NO_RELEASE = ('chore/', 'ci/', 'docs/', 'test/')
+
 def level(branch):
+    if branch.startswith(NO_RELEASE):
+        return 'none'
     if branch.startswith(('major', 'release')):
         return 'major'
     if branch.startswith(('minor', 'feature', 'feat')):
@@ -18,6 +24,8 @@ def level(branch):
 def next_tag(tags, branch, initial='1.0.0'):
     versions = [tuple(map(int, match.groups())) for tag in tags if (match := SEMVER.fullmatch(tag))]
     floor = tuple(map(int, initial.split('.')))
+    if level(branch) == 'none':
+        raise ValueError('Branch ' + branch + ' does not release')
     if not versions:
         return 'v' + initial
     major, minor, patch = max(versions)
@@ -56,11 +64,16 @@ def reserve(commit, branch, initial='1.0.0'):
     raise RuntimeError('Too many concurrent version reservations; rerun this workflow')
 
 if __name__ == '__main__':
-    argparse.ArgumentParser(description='Reserve or reuse the release tag of HEAD. Reads RELEASE_BRANCH; writes tag and version to GITHUB_OUTPUT.').parse_args()
+    argparse.ArgumentParser(description='Reserve or reuse the release tag of HEAD. Reads RELEASE_BRANCH; writes release, tag and version to GITHUB_OUTPUT.').parse_args()
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     subprocess.run(['git', 'merge-base', '--is-ancestor', commit, 'origin/main'], check=True)
-    tag = reserve(commit, os.environ.get('RELEASE_BRANCH', 'patch/manual'), Path('VERSION').read_text().strip())
-    values = 'tag=' + tag + '\nversion=' + tag[1:] + '\n'
+    branch = os.environ.get('RELEASE_BRANCH', 'patch/manual')
+    if level(branch) == 'none':
+        values = 'release=false\n'
+        print('No release: ' + branch + ' is a tooling/CI/docs/test branch')
+    else:
+        tag = reserve(commit, branch, Path('VERSION').read_text().strip())
+        values = 'release=true\ntag=' + tag + '\nversion=' + tag[1:] + '\n'
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write(values)
