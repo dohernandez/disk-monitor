@@ -1,4 +1,8 @@
 """No keys, registration, system settings or real folder scans."""
+import pathlib
+import sys
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(_ROOT / 'taskfiles/build/scripts'), str(_ROOT / 'taskfiles/release/scripts')]
 import os
 from pathlib import Path
 import plistlib
@@ -17,9 +21,9 @@ from build_signed_scanner import release_inputs
 
 class ScannerBuildTests(unittest.TestCase):
     def test_internal_client_has_identity_distinct_from_retired_app(self):
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         shared = (root / 'HelperPrototype/Shared.swift').read_text()
-        build = (root / 'build.sh').read_text()
+        build = (root / 'taskfiles/build/scripts/build.sh').read_text()
         self.assertIn('static let appID = "local.darien.diskmonitor.scanner.client"', shared)
         self.assertIn('--identifier local.darien.diskmonitor.scanner.client ', build)
         self.assertNotIn('SpotlightAccess.swift', build)
@@ -27,7 +31,7 @@ class ScannerBuildTests(unittest.TestCase):
         self.assertNotIn('NSWindow', (root / 'PrivilegedFolderReader.swift').read_text())
 
     def test_service_management_is_owned_by_main_app(self):
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         bridge = (root / 'HelperPrototype/Bridge.swift').read_text()
         reader = (root / 'PrivilegedFolderReader.swift').read_text()
         self.assertNotIn('import ServiceManagement', bridge)
@@ -80,7 +84,7 @@ class ScannerBuildTests(unittest.TestCase):
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 release_inputs({**env, key: value})
     def test_identity_modes_and_fixed_metadata(self):
-        script = Path(__file__).with_name('scanner_identity.py')
+        script = _ROOT / 'taskfiles/build/scripts/scanner_identity.py'
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             def generate(identity):

@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Render current SwiftUI views with example data; no live app or screen capture."""
+import argparse
 import json
 import os
 import platform
-import sys
 import subprocess
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-APP = ROOT.name
+PAGES = ["dashboard", "settings", "spotlight", "exclusions", "access", "usage", "subscriptions"]
+parser = argparse.ArgumentParser(description='Render README screenshots from example data (task docs:screenshots). Reads SPARKLE_TOOLS.')
+parser.add_argument('pages', nargs='*', choices=PAGES, help='pages to render (default: the documented pages)')
+requested = parser.parse_args().pages
+ROOT = Path(__file__).resolve().parents[3]
+APP = "disk-monitor" if (ROOT / "FolderAccess.swift").exists() else ROOT.name  # not the checkout folder name
 source = (ROOT / "main.swift").read_text()
 marker = '// MARK: - Entry point'
 assert source.count(marker) == 1
@@ -37,7 +41,7 @@ else:
         '@State private var page=CommandLine.arguments.contains("subscriptions") ? "Subscriptions" : "Usage"')
 sparkle = Path(os.environ.get('SPARKLE_TOOLS', str(ROOT / 'build/sparkle'))).resolve()
 assert (sparkle / 'Sparkle.framework').is_dir(), 'Build first or set SPARKLE_TOOLS to a built Sparkle directory'
-source += (ROOT / "docs/screenshots/fixture.swift").read_text()
+source += (Path(__file__).with_name("fixture.swift")).read_text()
 with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
     temporary = Path(directory)
     (temporary / "main.swift").write_text(source)
@@ -61,8 +65,7 @@ with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
         "-Xcc", "-ivfsoverlay", "-Xcc", str(overlay), "-module-cache-path", str(temporary / "modules"),
         str(temporary / "main.swift"), *app_sources, "-F", str(sparkle), "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", str(sparkle), "-o", str(binary), "-framework", "Cocoa", "-framework", "SwiftUI"], check=True)
     pages = ["dashboard", "settings"] if APP == "disk-monitor" else ["usage", "subscriptions"]
-    pages = sys.argv[1:] or pages
-    assert all(page in ["dashboard", "settings", "spotlight", "exclusions", "access", "usage", "subscriptions"] for page in pages)
+    pages = requested or pages
     for page in pages:
         output = ROOT / "docs/screenshots" / (page + ".png")
         subprocess.run([str(binary), page, str(output)], check=True, timeout=30)

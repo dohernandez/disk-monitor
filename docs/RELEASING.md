@@ -80,21 +80,21 @@ fixed. Do not delete the tag just to reclaim a version. Published releases are n
 overwritten by reruns. Incomplete drafts may have their assets replaced before publishing.
 
 `APP_VERSION`, `APP_BUILD` and `BUILD_DIR` support isolated builds. Without overrides,
-`sh build.sh` uses `VERSION`, build number 1, and `build/`. Keep source-build and
+`task build:app` uses `VERSION`, build number 1, and `build/`. Keep source-build and
 release-package versioning distinct: release packaging stamps the reserved version
 into both the bundle metadata and visible header.
 
 To build a local installer (use a new output folder if the name already exists):
 
 ```sh
-BUILD_DIR=/tmp/monitor-release-build sh build.sh
-python3 scripts/package.py --app '/tmp/monitor-release-build/Disk Monitor.app' --version 1.0.0 --output dist
+task build:app -- --build-dir /tmp/monitor-release-build
+task release:package -- --app '/tmp/monitor-release-build/Disk Monitor.app' --version 1.0.0 --output dist
 ```
 
 The package helper makes a copy before changing metadata. It never installs the app
 or modifies the input bundle. Checks include confirming that the app inside the mounted
 read-only image contains no test launch modes; the native self-tests run on a separate
-test build (`TEST_BUILD=1`). Updating the running local app remains a separate deliberate step.
+test build (`task build:app -- --test`). Updating the running local app remains a separate deliberate step.
 
 ## Branch rules
 
@@ -109,7 +109,7 @@ The intended rules live in `.github/main-ruleset.json`:
 **Activation verified (2026-09-22): active.** This repository is public. GitHub
 Free enforces the rules above; secret scanning and push protection are also enabled.
 The server configuration was read back separately from the committed ruleset file.
-Use `scripts/apply_main_rules.py --validated-ref <branch>` only after the required
+Use `task release:rules -- --validated-ref <branch>` only after the required
 checks pass when deliberately updating the rules.
 
 The helper checks the actual check names, integration and successful conclusions,
@@ -139,7 +139,7 @@ for the app's active scan/collector to finish. No login item is added.
 
 The first release containing this feature requires one manual installation: version
 1.0.0 does not contain an updater. Subsequent releases use Sparkle 2.10.0, pinned by
-URL and SHA-256 in `scripts/sparkle.py`. Framework licenses remain inside the bundle.
+URL and SHA-256 in `taskfiles/build/scripts/sparkle.py`. Framework licenses remain inside the bundle.
 The installer **and the appcast** are Ed25519-signed. `SUPublicEDKey` is embedded in
 the app; `SURequireSignedFeed` and `SUVerifyUpdateBeforeExtraction` require verification
 before trusting feed content or extracting an update. SHA-256 sidecars alone do not
@@ -153,7 +153,7 @@ profile. Profiling is disabled and the delegate's profile allowlist is empty.
 
 ### Key custody and CI
 
-`scripts/update-config.json` contains only the repository and public key. Each app
+`taskfiles/build/scripts/update-config.json` contains only the repository and public key. Each app
 has a separate seed, stored locally in the login Keychain under Sparkle's account
 `dohernandez.disk-monitor`. An exported copy is installed as the `release` environment
 secret, never a repository file or PR secret. Exported temporary files are owner-only
@@ -171,10 +171,10 @@ and changed downloads, changed/unsigned feeds, and wrong keys fail.
 For local signature regression checks after a build:
 
 ```sh
-SPARKLE_TOOLS=build/sparkle python3 -B scripts/test_signatures.py
+SPARKLE_TOOLS=build/sparkle task build:check:signatures
 ```
 
-`scripts/check_updater.py` starts the embedded updater in a temporary app identity,
+`task build:check:updater -- <test build>` starts the embedded updater of a test build in a temporary app identity,
 with automatic options disabled and no update UI. No test replaces or launches an installed app. Full interactive update/relaunch and
 Gatekeeper acceptance on a clean Mac remain manual acceptance checks. Verify these
 before claiming end-to-end installation acceptance. An older signed feed can be
@@ -201,7 +201,7 @@ The obsolete nested scanner app layout is rejected by packaging. The client’s
 --bundle-self-test checks that it resolves Disk Monitor as its containing app without
 registering, connecting to a service or requesting access.
 
-Run scripts/test_scanner_build.py and, for an isolated signed build,
+Run `task common:test:release` (tests/release/test_scanner_build.py) and, for an isolated signed build,
 `DiskMonitor --scanner-package-self-test` before any installer acceptance. Neither
 command registers or measures. Live cancellation, guided setup, update/reapproval,
 restart and clean-Mac acceptance are separate from successful compilation.
@@ -212,7 +212,7 @@ There is no feature flag that can silently omit it. Missing credentials fail the
 release. `--require-scanner` checks the rebuilt app, staged app and mounted installer.
 PR jobs and unsigned source builds use no release credentials and remain unprivileged.
 
-`scripts/build_signed_scanner.py` rejects PR and non-main execution, imports the
+`task build:scanner-release` (taskfiles/build/scripts/build_signed_scanner.py) rejects PR and non-main execution, imports the
 certificate into a disposable CI keychain, verifies its fingerprint, builds the
 checked-out commit and restores/deletes its temporary keychain in a finally block.
 Credentials are stripped from the build subprocess environment. The dedicated

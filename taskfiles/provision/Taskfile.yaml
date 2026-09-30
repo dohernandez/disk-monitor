@@ -1,0 +1,44 @@
+version: "3"
+
+vars:
+  RUFF_VERSION: "0.16.9"
+  PRE_COMMIT_VERSION: "4.1.0"
+  RUFF: "{{.ROOT_DIR}}/.tools/ruff/bin/ruff"
+
+tasks:
+  setup-dev:
+    desc: Set up the development tools (pinned ruff and pre-commit) and the git hooks
+    cmds:
+      - task: install-ruff
+      - task: install-precommit
+      - task: configure-precommit
+
+  install-ruff:
+    desc: Install the pinned ruff into the gitignored .tools/ruff
+    cmds:
+      - python3 -m pip install --quiet --disable-pip-version-check --target "{{.ROOT_DIR}}/.tools/ruff" "ruff=={{.RUFF_VERSION}}"
+    status:
+      - '"{{.RUFF}}" --version 2>/dev/null | grep -qF "{{.RUFF_VERSION}}"'
+
+  install-precommit:
+    desc: Install the pinned pre-commit with pipx
+    cmds:
+      - pipx install --force pre-commit=={{.PRE_COMMIT_VERSION}}
+    status:
+      - pre-commit --version 2>/dev/null | grep -qF '{{.PRE_COMMIT_VERSION}}'
+
+  configure-precommit:
+    desc: Install the git hooks (pre-commit and commit-msg) from .pre-commit-config.yaml
+    cmds:
+      - pre-commit clean
+      - pre-commit install --hook-type pre-commit --hook-type commit-msg
+    dir: "{{.ROOT_DIR}}"
+
+  install-task:
+    desc: Install the pinned, checksum-verified Task binary (CI bootstraps with the script directly)
+    summary: |
+      Usage:
+        task provision:install-task -- --dir .tools/bin
+    cmds:
+      - python3 ./taskfiles/provision/scripts/install_task.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"

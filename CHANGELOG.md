@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Run all project tooling through Taskfile namespaces; CI calls tasks and installs Task from a pinned, checksum-verified download.
+- Reject AI attribution in commit messages (commit-msg git hook).
 - Keep test launch modes (`--self-test`, `--updater-self-test`, `--diagnostics`, `--show`) out of release builds; they are compiled only into test builds.
 - Add signed Sparkle updates, manual checking and optional automatic updates.
 - Enforce owner-only cache permissions while preserving saved data.

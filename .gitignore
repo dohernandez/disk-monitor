@@ -1,4 +1,4 @@
-build/
+/build/
 __pycache__/
 *.py[cod]
 *.log
@@ -9,3 +9,5 @@ __pycache__/
 .env
 .env.*
 dist/
+.tools/
+/taskfiles/local/**

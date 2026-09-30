@@ -1,0 +1,32 @@
+# Git hooks for this repo (task provision:configure-precommit). Local hooks only; each calls a Taskfile task.
+# A commit runs them once; `task common:precommit` runs the same hooks on all files before a commit.
+default_install_hook_types: [pre-commit, commit-msg]
+repos:
+  - repo: local
+    hooks:
+      - id: lint
+        name: ruff lint (task common:lint)
+        entry: task common:lint
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        types_or: [python]
+      - id: task-cli-args
+        name: no task drops CLI_ARGS (task common:check:task-cli-args)
+        entry: task common:check:task-cli-args
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        files: ^(Taskfile\.yaml|taskfiles/)
+      - id: unit-tests
+        name: fast tests (task common:test)
+        entry: task common:test
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        files: \.(py|swift|sh)$
+      - id: commit-message
+        name: conventional commit, no AI attribution (task common:check:commit-message)
+        entry: task common:check:commit-message --
+        language: system
+        stages: [commit-msg]

@@ -5,8 +5,10 @@ import hashlib
 import platform
 import plistlib
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'build/scripts'))
 from bundle_info import APP_NAME, write_info
 from check_app import check
 

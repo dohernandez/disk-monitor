@@ -1,0 +1,15 @@
+version: "3"
+
+tasks:
+  screenshots:
+    desc: Render the README screenshots from example data (no live app or screen capture)
+    summary: |
+      Overwrites docs/screenshots/*.png. Needs a built Sparkle (task build:app first, or SPARKLE_TOOLS).
+
+      Usage:
+        task docs:screenshots
+        task docs:screenshots -- exclusions access
+        SPARKLE_TOOLS=/tmp/disk-build/sparkle task docs:screenshots -- settings
+    cmds:
+      - python3 ./taskfiles/docs/scripts/render.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"

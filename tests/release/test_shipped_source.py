@@ -3,8 +3,8 @@ import re
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-# Swift sources compiled into release builds (build.sh; Helper/Bridge only in signed scanner builds).
+ROOT = Path(__file__).resolve().parents[2]
+# Swift sources compiled into release builds (taskfiles/build/scripts/build.sh; Helper/Bridge only in signed scanner builds).
 SHIPPED = ('main.swift', 'Updates.swift', 'FolderAccess.swift', 'PrivilegedFolderReader.swift',
            'HelperPrototype/BridgeProtocol.swift', 'HelperPrototype/Shared.swift', 'HelperPrototype/RequestState.swift',
            'HelperPrototype/RecoveryState.swift', 'HelperPrototype/BundlePolicy.swift', 'HelperPrototype/Measurement.swift',
@@ -53,8 +53,8 @@ class ShippedSourceTests(unittest.TestCase):
         modes = (ROOT / 'tests/TestModes.swift').read_text()
         unguarded = [line for line in release_source(modes).splitlines() if line.strip() and not line.startswith('//')]
         self.assertEqual(unguarded, [])
-        build = (ROOT / 'build.sh').read_text()
-        self.assertIn('1) build_dir="${BUILD_DIR:-$PWD/build/test}"; set -- -D DISK_MONITOR_TESTS tests/TestModes.swift', build)
+        build = (ROOT / 'taskfiles/build/scripts/build.sh').read_text()
+        self.assertIn('1) build_dir="${build_dir:-$PWD/build/test}"; set -- -D DISK_MONITOR_TESTS tests/TestModes.swift', build)
 
     def test_guard_stripping(self):
         text = 'a\n#if DISK_MONITOR_TESTS\nCommandLine.arguments\n#endif\nb'

@@ -2,7 +2,7 @@
 
 Stable baseline: version 1.0.0, 2026-09-22. Measurement/runtime code is in
 [`main.swift`](../main.swift), with updates in [`Updates.swift`](../Updates.swift);
-packaging is in [`build.sh`](../build.sh).
+packaging is in [`taskfiles/build/scripts/build.sh`](../taskfiles/build/scripts/build.sh) (`task build:app`).
 Use symbol names below to navigate, since line numbers change.
 
 ## Source map

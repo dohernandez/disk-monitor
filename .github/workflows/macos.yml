@@ -15,6 +15,9 @@ concurrency:
   group: macos-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every step runs a Taskfile task (task --list). Task itself is installed from a pinned,
+# checksum-verified download (taskfiles/provision/task.json), not a third-party action,
+# because the release jobs run Task with signing secrets in their environment.
 jobs:
   policy:
     name: Commit signatures
@@ -23,23 +26,16 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
       - name: Require GitHub-verified commits
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          if [ -n "$PR_NUMBER" ]; then
-            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" --jq '.[].commit.verification.verified' > "$RUNNER_TEMP/verified.txt"
-          else
-            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.verification.verified' > "$RUNNER_TEMP/verified.txt"
-          fi
-          python3 - <<'PYVERIFY'
-          import os
-          from pathlib import Path
-          values = (Path(os.environ['RUNNER_TEMP']) / 'verified.txt').read_text().splitlines()
-          assert values and all(value == 'true' for value in values), 'Every new commit must have a verified signature'
-          print('PASS: all new commits have GitHub-verified signatures')
-          PYVERIFY
+        run: task common:check:commit-signatures -- --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --pr "$PR_NUMBER"
 
   build:
     name: Test and build (${{ matrix.arch }})
@@ -57,38 +53,36 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Check tasks pass CLI arguments
+        run: task common:check:task-cli-args
       - name: Validate release logic
-        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+        run: task common:test:release -- -v
       - name: Build app
         env:
-          BUILD_DIR: ${{ runner.temp }}/build
           APP_BUILD: ${{ github.run_number }}
-        run: |
-          test "$(uname -m)" = "${{ matrix.arch }}"
-          sh build.sh
+        run: task build:app -- --build-dir "$RUNNER_TEMP/build" --expect-arch "${{ matrix.arch }}"
       - name: Build test app
-        env:
-          TEST_BUILD: '1'
-          BUILD_DIR: ${{ runner.temp }}/test-build
-        run: sh build.sh
+        run: task build:app -- --test --build-dir "$RUNNER_TEMP/test-build" --expect-arch "${{ matrix.arch }}"
       - name: Check unprivileged scanner fixtures
-        run: python3 scripts/check_helper_fixtures.py "$RUNNER_TEMP/build"
+        run: task build:check:helper-fixtures -- "$RUNNER_TEMP/build"
       - name: Verify update signatures and tamper rejection
         env:
           SPARKLE_TOOLS: ${{ runner.temp }}/build/sparkle
-        run: python3 -B scripts/test_signatures.py
+        run: task build:check:signatures
       - name: Run native self-tests
-        run: python3 scripts/check_app.py --test-build "$RUNNER_TEMP/test-build/Disk Monitor.app"
+        run: task build:check -- --test-build "$RUNNER_TEMP/test-build/Disk Monitor.app"
       - name: Check isolated updater startup
-        run: python3 -B scripts/check_updater.py "$RUNNER_TEMP/test-build/Disk Monitor.app"
+        run: task build:check:updater -- "$RUNNER_TEMP/test-build/Disk Monitor.app"
       - name: Check packaged app
-        run: python3 scripts/check_app.py "$RUNNER_TEMP/build/Disk Monitor.app"
+        run: task build:check -- "$RUNNER_TEMP/build/Disk Monitor.app"
 
       - name: Verify PR installer
         if: github.event_name == 'pull_request'
-        run: python3 scripts/package.py --app "$RUNNER_TEMP/build/Disk Monitor.app" --version "$(cat VERSION)" --output "$RUNNER_TEMP/pr-installer"
+        run: task release:package -- --app "$RUNNER_TEMP/build/Disk Monitor.app" --version "$(cat VERSION)" --output "$RUNNER_TEMP/pr-installer"
       - name: Archive tested app
-        run: ditto -c -k --keepParent "$RUNNER_TEMP/build/Disk Monitor.app" "$RUNNER_TEMP/app.zip"
+        run: task release:archive -- "$RUNNER_TEMP/build/Disk Monitor.app" "$RUNNER_TEMP/app.zip"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: app-${{ matrix.arch }}
@@ -111,23 +105,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
       - name: Read merged PR branch
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" > "$RUNNER_TEMP/pulls.json"
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          pulls = json.loads((Path(os.environ['RUNNER_TEMP']) / 'pulls.json').read_text())
-          branches = [p['head']['ref'] for p in pulls if p.get('merged_at') and p.get('merge_commit_sha') == os.environ['GITHUB_SHA']]
-          branch = branches[0] if branches else 'patch/direct-push'
-          with open(os.environ['GITHUB_ENV'], 'a') as out:
-              out.write('RELEASE_BRANCH=' + branch + '\n')
-          PY
+        run: task release:version:branch -- --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
       - name: Reserve or reuse tested commit tag
         id: version
-        run: python3 scripts/release_version.py
+        run: task release:version
 
   package:
     name: Release installers
@@ -152,8 +138,10 @@ jobs:
         with:
           name: app-${{ matrix.arch }}
           path: ${{ runner.temp }}/download
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
       - name: Unpack tested app
-        run: ditto -x -k "$RUNNER_TEMP/download/app.zip" "$RUNNER_TEMP/unpacked"
+        run: task release:unpack -- "$RUNNER_TEMP/download/app.zip" "$RUNNER_TEMP/unpacked"
       - name: Build scanner-enabled release with isolated signing key
         env:
           SCANNER_SIGNING_SHA1: ${{ vars.SCANNER_SIGNING_SHA1 }}
@@ -162,33 +150,29 @@ jobs:
           BUILD_DIR: ${{ runner.temp }}/scanner-release
           APP_BUILD: ${{ github.run_number }}
           APP_VERSION: ${{ needs.version.outputs.version }}
+        run: task build:scanner-release
+      - name: Check scanner-enabled release
         run: |
-          python3 scripts/build_signed_scanner.py
-          python3 scripts/check_app.py "$BUILD_DIR/Disk Monitor.app" --require-scanner
-          python3 scripts/check_helper_fixtures.py "$BUILD_DIR"
-          ditto "$BUILD_DIR/Disk Monitor.app" "$RUNNER_TEMP/unpacked/Disk Monitor.app"
+          task build:check -- "$RUNNER_TEMP/scanner-release/Disk Monitor.app" --require-scanner
+          task build:check:helper-fixtures -- "$RUNNER_TEMP/scanner-release"
+          task release:copy-app -- "$RUNNER_TEMP/scanner-release/Disk Monitor.app" "$RUNNER_TEMP/unpacked/Disk Monitor.app"
       - name: Check isolated updater startup (test build of the same source)
-        env:
-          TEST_BUILD: '1'
-          BUILD_DIR: ${{ runner.temp }}/test-build
         run: |
-          sh build.sh
-          python3 -B scripts/check_updater.py "$BUILD_DIR/Disk Monitor.app"
+          task build:app -- --test --build-dir "$RUNNER_TEMP/test-build" --expect-arch "${{ matrix.arch }}"
+          task build:check:updater -- "$RUNNER_TEMP/test-build/Disk Monitor.app"
       - name: Create and verify installer
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
           APP_BUILD: ${{ github.run_number }}
-        run: python3 scripts/package.py --app "$RUNNER_TEMP/unpacked/Disk Monitor.app" --version "$RELEASE_VERSION" --build "$APP_BUILD" --require-scanner
+        run: task release:package -- --app "$RUNNER_TEMP/unpacked/Disk Monitor.app" --version "$RELEASE_VERSION" --build "$APP_BUILD" --require-scanner
       - name: Prepare pinned signing tools
-        run: |
-          python3 scripts/sparkle.py "$RUNNER_TEMP/signing"
-          xcrun swiftc scripts/key_public.swift -o "$RUNNER_TEMP/signing/sparkle/key_public"
+        run: task release:tools -- --dir "$RUNNER_TEMP/signing"
       - name: Sign installer and update feed
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
           APP_BUILD: ${{ github.run_number }}
-        run: python3 scripts/sign_release.py --image "dist/Disk-Monitor-$RELEASE_VERSION-macOS-${{ matrix.arch }}.dmg" --version "$RELEASE_VERSION" --build "$APP_BUILD" --arch "${{ matrix.arch }}" --tools "$RUNNER_TEMP/signing/sparkle"
+        run: task release:sign -- --image "dist/Disk-Monitor-$RELEASE_VERSION-macOS-${{ matrix.arch }}.dmg" --version "$RELEASE_VERSION" --build "$APP_BUILD" --arch "${{ matrix.arch }}" --tools "$RUNNER_TEMP/signing/sparkle"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-${{ matrix.arch }}
@@ -211,11 +195,13 @@ jobs:
           pattern: installer-*
           merge-multiple: true
           path: dist
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
       - name: Prepare public signature verifier
-        run: xcrun swiftc scripts/key_public.swift -o "$RUNNER_TEMP/key_public"
+        run: task release:tools -- --dir "$RUNNER_TEMP" --verifier-only
       - name: Publish verified installers and signed feeds
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
           UPDATE_VERIFIER: ${{ runner.temp }}/key_public
-        run: python3 scripts/publish_release.py
+        run: task release:publish

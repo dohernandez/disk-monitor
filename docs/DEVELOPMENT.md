@@ -7,17 +7,22 @@ building or restarting the app.
 ## Build and test
 
 ```sh
-sh -n build.sh
-sh build.sh > build.log 2>&1
-TEST_BUILD=1 sh build.sh > build-test.log 2>&1
-python3 scripts/check_app.py --test-build "build/test/Disk Monitor.app"
-python3 scripts/check_app.py "build/Disk Monitor.app"
+task build:app > build.log 2>&1
+task build:app -- --test > build-test.log 2>&1
+task build:check -- --test-build "build/test/Disk Monitor.app"
+task build:check -- "build/Disk Monitor.app"
+task common:check
 ```
+
+`task --list` shows every task; each has `task --summary <name>` usage. `task build:app` takes
+`--test`, `--build-dir DIR` and `--expect-arch arm64|x86_64` (env `APP_VERSION`, `APP_BUILD`,
+`BUILD_DIR` still apply). `task common:check` runs the lint, the CLI-argument check and the fast
+tests; the pre-commit hook runs the same, so there is no need to run it again before committing.
 
 Test launch modes (`--self-test`, `--updater-self-test`, `--diagnostics`, `--show`) live in
 `tests/TestModes.swift` behind `#if DISK_MONITOR_TESTS` and are compiled only by
-`TEST_BUILD=1`, into `build/test` by default. `check_app.py` fails if a release binary
-contains any of them; `scripts/test_shipped_source.py` fails if shipped Swift sources
+`task build:app -- --test`, into `build/test` by default. `task build:check` fails if a release binary
+contains any of them; `tests/release/test_shipped_source.py` fails if shipped Swift sources
 reference them outside the guard.
 
 Keep the complete build log when diagnosing failure. A successful build creates
@@ -44,7 +49,7 @@ click behavior. Extend focused tests when changing those contracts.
 ## Command Line Tools workaround
 
 Some local CLT installations contain both `swift/module.modulemap` and
-`swift/bridging.modulemap`, causing duplicate SwiftBridging definitions. `build.sh`
+`swift/bridging.modulemap`, causing duplicate SwiftBridging definitions. `taskfiles/build/scripts/build.sh`
 creates a project-local empty module map and VFS overlay only when both exist.
 The overlay is passed to both Swift (`-vfsoverlay`) and Clang (`-Xcc -ivfsoverlay`).
 Do not remove one side without reproducing and checking the build. Never edit or
@@ -89,7 +94,7 @@ For example, before a runtime edit:
 
 ```sh
 backup_dir="$(mktemp -d "$HOME/DiskMonitor-backup.XXXXXX")"
-cp main.swift build.sh "$backup_dir/"
+cp main.swift taskfiles/build/scripts/build.sh "$backup_dir/"
 ditto "build/Disk Monitor.app" "$backup_dir/Disk Monitor.app"
 printf '%s\n' "$backup_dir"
 ```

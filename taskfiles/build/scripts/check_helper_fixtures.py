@@ -1,11 +1,13 @@
 """Compile/run unprivileged helper fixtures using a dummy public fingerprint."""
+import argparse
 import platform
 from pathlib import Path
 import subprocess
-import sys
 
-root = Path(__file__).resolve().parent.parent
-build = Path(sys.argv[1] if len(sys.argv) > 1 else root / 'build').absolute()
+root = Path(__file__).resolve().parents[3]
+parser = argparse.ArgumentParser(description='Compile and run the unprivileged scanner fixtures (task build:check:helper-fixtures).')
+parser.add_argument('build_dir', nargs='?', default=str(root / 'build'), help='build folder for fixture binaries (default build)')
+build = Path(parser.parse_args().build_dir).absolute()
 build.mkdir(parents=True, exist_ok=True)
 identity = build / 'FixtureScannerIdentity.swift'
 identity.write_text('let signingCertificateSHA1 = "' + '0' * 40 + '"\nlet scannerBuildNumber = "fixture"\n')
@@ -56,7 +58,7 @@ from scanner_constraint import SERVICE, constraint, check as check_constraint
 launch_check = build / 'launch-constraint-check'
 compiler = base.copy()
 compiler.remove('-parse-as-library')
-subprocess.run(compiler + [str(root / 'scripts/check_launch_constraint.swift'), '-o', str(launch_check)], check=True)
+subprocess.run(compiler + [str(Path(__file__).with_name('check_launch_constraint.swift')), '-o', str(launch_check)], check=True)
 with tempfile.TemporaryDirectory(prefix='scanner-launch-') as directory:
     app = Path(directory) / 'Fixture.app'
     scanner = app / 'Contents/MacOS/Scanner'

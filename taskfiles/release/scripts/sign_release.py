@@ -6,7 +6,9 @@ import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'build/scripts'))
 from bundle_info import APP_NAME
 
 NS = 'http://www.andymatuschak.org/xml-namespaces/sparkle'
@@ -42,6 +44,6 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--image',required=True);parser.add_argument('--version',required=True);parser.add_argument('--build',required=True);parser.add_argument('--arch',required=True);parser.add_argument('--tools',required=True);a=parser.parse_args()
     seed=os.environ.pop('SPARKLE_PRIVATE_KEY','').encode()
     if not seed:raise SystemExit('SPARKLE_PRIVATE_KEY is required; unsigned releases are refused')
-    config=json.loads(Path(__file__).with_name('update-config.json').read_text())
+    config=json.loads(Path(__file__).resolve().parents[2].joinpath('build/scripts/update-config.json').read_text())
     feed=sign_release(a.image,a.version,a.build,a.arch,a.tools,seed,config)
     print('Signed installer and feed: '+feed.name)

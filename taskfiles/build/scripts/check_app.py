@@ -27,7 +27,7 @@ def check_release_binary(app):
 def check_test_build(app):
     """Run the native self-tests in a test build (TEST_BUILD=1)."""
     app = Path(app).resolve()
-    assert len(test_markers(app)) == len(TEST_MODE_MARKERS), 'Not a test build; build it with TEST_BUILD=1 sh build.sh'
+    assert len(test_markers(app)) == len(TEST_MODE_MARKERS), 'Not a test build; build it with task build:app -- --test'
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     output = subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--self-test'], check=True, timeout=120, capture_output=True, text=True).stdout
     print(output, end='')

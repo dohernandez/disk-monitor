@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Main-only release build. Credentials exist only in a disposable CI keychain."""
+"""Main-only release build. Credentials exist only in a disposable CI keychain.
+
+Usage (task build:scanner-release; release environment only):
+  python3 taskfiles/build/scripts/build_signed_scanner.py
+
+Reads SCANNER_SIGNING_SHA1, SCANNER_P12_BASE64, SCANNER_P12_PASSWORD, BUILD_DIR, APP_BUILD,
+APP_VERSION and RUNNER_TEMP. Refuses anything but a trusted main release job.
+"""
+import argparse
 import base64
 import os
 from pathlib import Path
@@ -8,6 +16,8 @@ import secrets
 import shlex
 import subprocess
 import tempfile
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def release_inputs(env):
@@ -59,7 +69,7 @@ def main():
             if fingerprint not in identities.upper():
                 raise RuntimeError('Scanner signing identity does not match the configured public fingerprint')
             env['SCANNER_SIGNING_SHA1'] = fingerprint
-            subprocess.run(['sh', 'build.sh'], env=env, check=True)
+            subprocess.run(['sh', str(ROOT / 'taskfiles/build/scripts/build.sh')], env=env, check=True)
         finally:
             try:
                 security('list-keychains', '-d', 'user', '-s', *previous)
@@ -69,4 +79,5 @@ def main():
 
 
 if __name__ == '__main__':
+    argparse.ArgumentParser(description='Build the signed scanner release (main release job only). Reads its inputs from the environment.').parse_args()
     main()

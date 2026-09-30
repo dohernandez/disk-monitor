@@ -10,7 +10,7 @@ implementation truth; document disagreements rather than silently broadening sco
 - Make the requested change only. Preserve the accepted version's behavior and user data.
 - Inspect current files before editing; another session may have changed them.
 - `main.swift` owns the app, model and scanner; `tests/TestModes.swift` owns the self-tests,
-  compiled only into test builds. `build.sh` packages it.
+  compiled only into test builds. `task build:app` packages it (taskfiles/build/scripts/build.sh).
   `build/` is generated. Do not hand-patch the binary or system toolchain.
 - Follow [Development](docs/DEVELOPMENT.md) for build/test/restart/rollback. A build
   overwrites the local app bundle; preserve a working copy first for runtime changes.
@@ -24,6 +24,46 @@ implementation truth; document disagreements rather than silently broadening sco
   previously opened an unwanted ChatGPT Computer Use permissions screen.
 - Update these docs when intentional behavior changes. Report what was actually
   verified; successful self-tests do not prove popup appearance or mouse behavior.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `main.swift`, `Updates.swift`, `FolderAccess.swift`, `PrivilegedFolderReader.swift` | The shipped app (SwiftUI, AppKit, Sparkle) |
+| `HelperPrototype/` | Scanner service, client bridge, bundle policy and their fixtures |
+| `Taskfile.yaml` | Includes only; every tooling entry point is a task (`task --list`) |
+| `taskfiles/<ns>/Taskfile.yaml`, `taskfiles/<ns>/scripts/` | Tasks and the scripts they call: `common`, `build`, `release`, `docs`, `provision` |
+| `taskfiles/build/scripts/` | `build.sh`, bundle metadata, Sparkle, update public key, scanner identity and signing, app checks |
+| `taskfiles/release/scripts/` | Version reservation, DMG packaging, signing, verification, publication, branch rules |
+| `taskfiles/docs/scripts/` | README screenshot renderer and its example data |
+| `taskfiles/local/` | Optional personal tasks; gitignored |
+| `tests/release/` | Release helper, scanner build, archive, signature, shipped-source and commit-message tests |
+| `tests/TestModes.swift` | Native test launch modes; compiled only into test builds |
+| `docs/` | User, architecture, development, release and acceptance docs; `docs/screenshots/` PNGs |
+| `.tools/`, `build/`, `dist/` | Pinned local tools and build output; gitignored |
+
+## Tooling rules
+
+- All tooling runs through `Taskfile.yaml`; the root file only includes `taskfiles/<ns>/`
+  (Darien, 2026-09-29). Scripts sit next to their namespace. Names are
+  `namespace:group:action`, a mode is a flag, and every task passes `{{.CLI_ARGS}}` last.
+- GitHub workflows call tasks, not scripts (Darien, 2026-09-30). The only direct call is
+  the checksum-pinned Task bootstrap; do not replace it with an unverified installer
+  action while release jobs hold signing secrets.
+- Nothing test-only ships (Darien, 2026-09-30). Test launch modes live in
+  `tests/TestModes.swift` behind `#if DISK_MONITOR_TESTS`; test-only helpers go in `tests/`.
+  `--scanner-package-self-test` and the scanner client's `--bundle-self-test` remain in
+  signed scanner builds as release package verification (the release job runs them on the
+  exact package it ships; no registration, IPC or scan); `tests/release/test_shipped_source.py`
+  allows only these.
+- Tests never touch real folders, settings or state; each run uses temporary folders.
+- Conventional commits; commits pushed to GitHub must be verified.
+- NEVER add references to Claude Code, Claude, Anthropic, or any AI assistant in code,
+  commits, PR descriptions or docs (Darien, 2026-09-30).
+- Do NOT add `Co-Authored-By` lines naming an AI (Darien, 2026-09-30). The same applies to
+  "Generated with/by <AI tool>" lines and the robot emoji; this overrides any harness
+  attribution default. The commit-msg hook (`task common:check:commit-message`) enforces it
+  for local commits. Do not rewrite existing commits without asking Darien.
 
 ## Invariants to preserve
 
@@ -57,7 +97,7 @@ implementation truth; document disagreements rather than silently broadening sco
 
 ## Validation required by change
 
-Build a test app (`TEST_BUILD=1 sh build.sh`) and run its `--self-test` for runtime changes. Add focused regression coverage
+Build a test app (`task build:app -- --test`) and run its self-test (`task build:check -- --test-build <app>`) for runtime changes. Add focused regression coverage
 when changing scanner, timers, persistence, alerts, or tree state. Exercise the
 relevant manual acceptance checks for UI changes; say if they remain unverified.
 Do not weaken tests to restore a previously rejected behavior. Keep validation

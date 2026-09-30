@@ -1,3 +1,7 @@
+import pathlib
+import sys
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(_ROOT / 'taskfiles/build/scripts'), str(_ROOT / 'taskfiles/release/scripts')]
 import subprocess
 import tempfile
 import unittest

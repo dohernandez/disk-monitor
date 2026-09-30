@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Reserve a unique semantic tag at a tested commit, safely across concurrent merges."""
+import argparse
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 SEMVER = re.compile(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
@@ -56,6 +56,7 @@ def reserve(commit, branch, initial='1.0.0'):
     raise RuntimeError('Too many concurrent version reservations; rerun this workflow')
 
 if __name__ == '__main__':
+    argparse.ArgumentParser(description='Reserve or reuse the release tag of HEAD. Reads RELEASE_BRANCH; writes tag and version to GITHUB_OUTPUT.').parse_args()
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     subprocess.run(['git', 'merge-base', '--is-ancestor', commit, 'origin/main'], check=True)
     tag = reserve(commit, os.environ.get('RELEASE_BRANCH', 'patch/manual'), Path('VERSION').read_text().strip())

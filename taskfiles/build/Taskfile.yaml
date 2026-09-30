@@ -1,0 +1,75 @@
+version: "3"
+
+tasks:
+  app:
+    desc: Build Disk Monitor.app (release by default; --test for the test build)
+    summary: |
+      Always builds; there is no skip-if-present. Env APP_VERSION, APP_BUILD and BUILD_DIR still apply.
+
+      Usage:
+        task build:app
+        task build:app -- --test
+        task build:app -- --build-dir /tmp/disk-release --expect-arch arm64
+    cmds:
+      - sh taskfiles/build/scripts/build.sh {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  scanner-release:
+    desc: Build the signed scanner release in the main release job only (reads the scanner certificate from the environment)
+    summary: |
+      Refuses to run outside a trusted main release job. Reads SCANNER_SIGNING_SHA1, SCANNER_P12_BASE64,
+      SCANNER_P12_PASSWORD, BUILD_DIR, APP_BUILD, APP_VERSION and RUNNER_TEMP.
+
+      Usage:
+        task build:scanner-release
+    cmds:
+      - python3 ./taskfiles/build/scripts/build_signed_scanner.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:
+    desc: Check a built app (release app, --require-scanner for a signed release, or --test-build to run the native self-tests)
+    summary: |
+      Usage:
+        task build:check -- "build/Disk Monitor.app"
+        task build:check -- "build/Disk Monitor.app" --require-scanner
+        task build:check -- --test-build "build/test/Disk Monitor.app"
+    cmds:
+      - python3 ./taskfiles/build/scripts/check_app.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:updater:
+    desc: Start the embedded updater of a test build in a disposable identity
+    summary: |
+      Usage:
+        task build:check:updater -- "build/test/Disk Monitor.app"
+    cmds:
+      - python3 -B ./taskfiles/build/scripts/check_updater.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:signatures:
+    desc: Verify update signatures and tamper rejection with disposable keys (SPARKLE_TOOLS required)
+    summary: |
+      Usage:
+        SPARKLE_TOOLS=build/sparkle task build:check:signatures
+        SPARKLE_TOOLS=build/sparkle task build:check:signatures -- -v
+    cmds:
+      - python3 -B tests/release/test_signatures.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:helper-fixtures:
+    desc: Compile and run the unprivileged scanner fixtures (no signing, registration or real scan)
+    summary: |
+      Usage:
+        task build:check:helper-fixtures -- "$RUNNER_TEMP/build"
+    cmds:
+      - python3 ./taskfiles/build/scripts/check_helper_fixtures.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:scanner-pair:
+    desc: Check two signed scanner candidates keep the app and helper identities, with an increasing build
+    summary: |
+      Usage:
+        task build:check:scanner-pair -- "/tmp/candidate-1/Disk Monitor.app" "/tmp/candidate-2/Disk Monitor.app"
+    cmds:
+      - python3 ./taskfiles/build/scripts/verify_scanner_pair.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"

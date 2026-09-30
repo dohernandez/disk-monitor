@@ -1,0 +1,23 @@
+version: "3"
+
+# Project tooling only. The shipped app contains none of it (see AGENTS.md).
+includes:
+  common:
+    desc: Tests, lint and repository checks
+    taskfile: ./taskfiles/common/Taskfile.yaml
+  build:
+    desc: Build the app (release, test or signed scanner build) and check the result
+    taskfile: ./taskfiles/build/Taskfile.yaml
+  release:
+    desc: Version, package, sign, verify and publish installers
+    taskfile: ./taskfiles/release/Taskfile.yaml
+  docs:
+    desc: Render README screenshots from example data
+    taskfile: ./taskfiles/docs/Taskfile.yaml
+  provision:
+    desc: Install the pinned development tools and the git hooks
+    taskfile: ./taskfiles/provision/Taskfile.yaml
+  local:
+    desc: Personal tasks excluded from git
+    taskfile: ./taskfiles/local/Taskfile.yaml
+    optional: true
