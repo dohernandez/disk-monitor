@@ -94,6 +94,11 @@ jobs:
           BUILD_DIR: ${{ runner.temp }}/scanner-release
           APP_BUILD: ${{ github.event.workflow_run.run_number }}
           APP_VERSION: ${{ needs.version.outputs.version }}
+          # Describe the Checks run that triggered this release; the signing guard requires
+          # a push or manual run on main in this repository.
+          RELEASE_TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          RELEASE_TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TRIGGER_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
         run: task build:scanner-release
       - name: Check scanner-enabled release
         run: |

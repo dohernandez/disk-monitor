@@ -20,8 +20,26 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def trusted_main_job(env):
+    """A push or manual run on main, or the Release workflow_run that follows one.
+
+    For workflow_run the workflow file always comes from the default branch, so the
+    RELEASE_TRIGGER_* values it passes describe the Checks run that triggered it.
+    """
+    if env.get('GITHUB_ACTIONS') != 'true' or env.get('GITHUB_REF') != 'refs/heads/main':
+        return False
+    event = env.get('GITHUB_EVENT_NAME')
+    if event in ('push', 'workflow_dispatch'):
+        return True
+    return (event == 'workflow_run'
+            and env.get('RELEASE_TRIGGER_EVENT') in ('push', 'workflow_dispatch')
+            and env.get('RELEASE_TRIGGER_BRANCH') == 'main'
+            and bool(env.get('GITHUB_REPOSITORY'))
+            and env.get('RELEASE_TRIGGER_REPOSITORY') == env.get('GITHUB_REPOSITORY'))
+
+
 def release_inputs(env):
-    if env.get('GITHUB_ACTIONS') != 'true' or env.get('GITHUB_REF') != 'refs/heads/main' or env.get('GITHUB_EVENT_NAME') not in ('push', 'workflow_dispatch'):
+    if not trusted_main_job(env):
         raise ValueError('Scanner release signing requires a trusted main release job')
     fingerprint = env.get('SCANNER_SIGNING_SHA1', '')
     if not re.fullmatch('[0-9A-Fa-f]{40}', fingerprint):
