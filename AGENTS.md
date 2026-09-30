@@ -32,9 +32,10 @@ implementation truth; document disagreements rather than silently broadening sco
 | `main.swift`, `Updates.swift`, `FolderAccess.swift`, `PrivilegedFolderReader.swift` | The shipped app (SwiftUI, AppKit, Sparkle) |
 | `HelperPrototype/` | Scanner service, client bridge, bundle policy and their fixtures (Swift sources only; its tools run as tasks) |
 | `Taskfile.yaml` | Includes only; every tooling entry point is a task (`task --list`) |
-| `taskfiles/<ns>/Taskfile.yaml`, `taskfiles/<ns>/scripts/` | Tasks and the scripts they call: `common`, `build`, `release`, `docs`, `provision` |
+| `taskfiles/<ns>/Taskfile.yaml`, `taskfiles/<ns>/scripts/` | Tasks and the scripts they call: `common`, `build`, `release`, `devtools`, `docs`, `provision` |
 | `taskfiles/build/scripts/` | `build.sh`, bundle metadata, Sparkle, update public key, scanner identity and signing, app checks, scanner preview build and replacement preflight |
-| `taskfiles/release/scripts/` | Version reservation, DMG packaging, signing, verification, publication, branch rules |
+| `taskfiles/release/scripts/` | Version reservation, DMG packaging, signing, verification, publication |
+| `taskfiles/devtools/rulesets/`, `taskfiles/devtools/scripts/` | GitHub rulesets as code (snapshots and `devtools:rulesets:*`) |
 | `taskfiles/docs/scripts/` | README screenshot renderer and its example data |
 | `taskfiles/common/scripts/` | CLI_ARGS check, commit-message and PR-message checks, commit-signature check |
 | `taskfiles/provision/` | Pinned Task bootstrap (`task.json`, checksum-verified), ruff and pre-commit install, hooks |
@@ -48,6 +49,9 @@ implementation truth; document disagreements rather than silently broadening sco
 
 ## Tooling rules
 
+- Rulesets are code (Darien, 2026-09-30, as in genlayer-node): change protection through
+  `taskfiles/devtools/rulesets/*.json` and `devtools:rulesets:*`; after any UI change run
+  `export` and commit. `apply`/`remove` change live settings and need Darien's approval.
 - All tooling runs through `Taskfile.yaml`; the root file only includes `taskfiles/<ns>/`
   (Darien, 2026-09-29). Scripts sit next to their namespace. Names are
   `namespace:group:action`, a mode is a flag, and every task passes `{{.CLI_ARGS}}` last.

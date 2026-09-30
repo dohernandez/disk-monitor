@@ -14,13 +14,18 @@ import bundle_info
 class ReleaseTests(unittest.TestCase):
     def test_first_release_is_stable(self):
         self.assertEqual(release.next_tag({}, 'feature/installers'), 'v1.0.0')
-    def test_ruleset_helper_finds_the_committed_ruleset(self):
-        import apply_main_rules
-        rules = json.loads((apply_main_rules.ROOT / '.github/main-ruleset.json').read_text())
+    def test_ruleset_snapshots_match_the_checks_workflow(self):
+        sys.path.insert(0, str(_ROOT / 'taskfiles/devtools/scripts'))
+        import sync_rulesets
+        found = sync_rulesets.snapshots()
+        self.assertEqual(list(found), ['Protect main'])
+        rules = json.loads(found['Protect main'].read_text())
+        self.assertEqual(sync_rulesets.dump(rules), found['Protect main'].read_text(), 'snapshot must be normalized')
+        self.assertEqual(found['Protect main'].name, sync_rulesets.slug('Protect main'))
         self.assertIn('required_signatures', [r['type'] for r in rules['rules']])
-        contexts = [c['context'] for r in rules['rules'] if r['type'] == 'required_status_checks' for c in r['parameters']['required_status_checks']]
+        contexts = [c['context'] for c in sync_rulesets.required_checks(rules)]
         self.assertNotIn('Commit signatures', contexts)
-        workflow = (apply_main_rules.ROOT / '.github/workflows/checks.yml').read_text()
+        workflow = (sync_rulesets.ROOT / '.github/workflows/checks.yml').read_text()
         for context in contexts:
             with self.subTest(context=context):
                 self.assertIn('name: ' + context.replace('(arm64)', '(${{ matrix.arch }})').replace('(x86_64)', '(${{ matrix.arch }})'), workflow)

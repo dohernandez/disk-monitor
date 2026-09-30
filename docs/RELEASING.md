@@ -107,9 +107,10 @@ or modifies the input bundle. Checks include confirming that the app inside the 
 read-only image contains no test launch modes; the native self-tests run on a separate
 test build (`task build:app -- --test`). Updating the running local app remains a separate deliberate step.
 
-## Branch rules
+## Branch rules (rulesets as code)
 
-The intended rules live in `.github/main-ruleset.json`:
+Rulesets are code, as in genlayer-node (Darien, 2026-09-30). The committed snapshot is
+`taskfiles/devtools/rulesets/protect-main.json` ("Protect main"):
 
 - PR required; zero approving reviews for the current solo-maintainer workflow.
 - Verified signatures required for incoming commits (GitHub's `required_signatures` rule;
@@ -119,18 +120,19 @@ The intended rules live in `.github/main-ruleset.json`:
 - Branch must be up to date before merging; review conversations must be resolved.
 - No force-pushes, deletions, or administrator bypass list for `main`.
 
-**Activation verified (2026-09-22): active** with the earlier required checks (Commit
-signatures and both Test and build jobs). The committed file now lists the checks above;
-it takes effect only when `task release:rules` applies it, which needs Darien's approval.
-Pass a PR head as `--validated-ref`: Branch name runs on PRs only. This repository is public. GitHub
-Free enforces the rules above; secret scanning and push protection are also enabled.
-The server configuration was read back separately from the committed ruleset file.
-Use `task release:rules -- --validated-ref <branch>` only after the required
-checks pass when deliberately updating the rules.
+| Task | What it does |
+|---|---|
+| `task devtools:rulesets:export` | Writes every live ruleset to a normalized snapshot (read-only on GitHub). Run it after any change in the GitHub UI, then commit. |
+| `task devtools:rulesets:diff` | Compares live rulesets with the snapshots; exit 2 on drift (read-only) |
+| `task devtools:rulesets:apply -- --validated-ref <PR head>` | Creates or updates live rulesets from the snapshots, then reads each back. Refuses unless every required check already passed on that ref; never deletes. **Needs Darien's approval.** |
+| `task devtools:rulesets:remove -- --name "Protect main"` | Deletes a live ruleset and its snapshot. **Needs Darien's approval.** |
 
-The helper checks the actual check names, integration and successful conclusions,
-then creates or updates only the ruleset named “Protect main” and reads it back.
-It never changes repository visibility, billing, unrelated rulesets, or credentials.
+The snapshot was exported from the live ruleset on 2026-09-30, which then required Commit
+signatures and both Test and build jobs; only its required checks were edited to the list
+above. `diff` shows exactly that change until it is applied. Pass a PR head as
+`--validated-ref`, because Branch name runs on PRs only. The repository is public; GitHub
+Free enforces these rules, and secret scanning and push protection are also enabled. The
+tooling never changes repository visibility, billing, unrelated settings or credentials.
 
 Signed commits can be made locally using a registered signing key, or through
 GitHub’s signed web/GraphQL commit interface. Unsigned PR commits can block a merge
