@@ -83,6 +83,14 @@ class ScannerBuildTests(unittest.TestCase):
                            ('SCANNER_P12_PASSWORD', ''), ('SCANNER_P12_BASE64', ''), ('SCANNER_P12_BASE64', '***')]:
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 release_inputs({**env, key: value})
+        run = {**env, 'GITHUB_EVENT_NAME': 'workflow_run', 'GITHUB_REPOSITORY': 'owner/repo', 'RELEASE_TRIGGER_EVENT': 'push',
+               'RELEASE_TRIGGER_BRANCH': 'main', 'RELEASE_TRIGGER_REPOSITORY': 'owner/repo'}
+        self.assertEqual(release_inputs(run), ('A' * 40, 'fixture', b'fixture'), 'Release workflow_run after a main push is trusted')
+        for key, value in [('RELEASE_TRIGGER_EVENT', 'pull_request'), ('RELEASE_TRIGGER_EVENT', ''), ('RELEASE_TRIGGER_BRANCH', 'feat/x'),
+                           ('RELEASE_TRIGGER_REPOSITORY', 'fork/repo'), ('RELEASE_TRIGGER_REPOSITORY', ''), ('GITHUB_REPOSITORY', ''),
+                           ('GITHUB_REF', 'refs/heads/feat/x')]:
+            with self.subTest(workflow_run=key, value=value), self.assertRaises(ValueError):
+                release_inputs({**run, key: value})
     def test_identity_modes_and_fixed_metadata(self):
         script = _ROOT / 'taskfiles/build/scripts/scanner_identity.py'
         with tempfile.TemporaryDirectory() as directory:
