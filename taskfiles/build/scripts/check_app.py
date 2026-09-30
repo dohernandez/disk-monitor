@@ -10,7 +10,8 @@ from bundle_info import APP_NAME, BINARY, IDENTIFIER
 
 # Strings that only tests/TestModes.swift compiles in (long enough to be stored
 # as bytes, unlike Swift's inline small strings).
-TEST_MODE_MARKERS = (b'DISK_MONITOR_TEST_MODE', b'--updater-self-test', b'PASS: scanner, folders', b'DiskMonitor-launch-diagnostic')
+TEST_MODE_MARKERS = (b'DISK_MONITOR_TEST_MODE', b'--updater-self-test', b'PASS: scanner, folders', b'DiskMonitor-launch-diagnostic',
+                     b'--spotlight-exclusion-test', b'--run-scenarios', b'--dump-accessibility', b'--close-dialogs')
 
 
 def test_markers(app):

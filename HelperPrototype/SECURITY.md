@@ -220,3 +220,19 @@ in progress followed by “Measurement cancelled”. Unregister then removed the
 no fixed-path du remained at the post-unregister check. The source now labels this
 as cancellation rather than failure. This preview evidence does not establish the
 integrated bridge's cancellation or disconnected-child recovery behavior.
+
+## Read-only exclusion list (protocol version 3, 2026-09-30)
+
+Search Privacy shows only folder names, and the exact list is root-only, so the scanner gains
+one argument-free operation, `exclusions`. It reads the fixed file
+`/System/Volumes/Data/.Spotlight-V100/VolumeConfiguration.plist` after the same ancestor checks
+as measuring, opens it with `O_NOFOLLOW`, and requires a root-owned regular file that is not
+group or world writable and at most 1 MiB. It returns the `Exclusions` strings only: at most
+200 absolute paths of at most 1024 bytes each, with no NUL or newline. Any other shape is an
+error, never an empty list. There is no write path, no caller-selected file and no other key.
+Transport stays bounded: bridge and app accept at most 256 KiB for this reply only.
+The ping version is now 3. Measuring accepts 2 or 3; `exclusions` needs 3 and reports
+"Scanner update required" against an older helper.
+Fixture tests cover parsing, a missing key, bad types, count and length limits, wrong owner,
+group or world writable, links, oversized files and directories.
+Residual risk: macOS could change this private file's format; the app then shows Unknown.

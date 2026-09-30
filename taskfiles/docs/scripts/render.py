@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix=APP + "-readme-") as directory:
     app_sources = [str(ROOT / "Updates.swift")]
     flags = []
     if APP == "disk-monitor":
-        app_sources += [str(ROOT / name) for name in ["FolderAccess.swift", "PrivilegedFolderReader.swift",
+        app_sources += [str(ROOT / name) for name in ["SpotlightExclusions.swift", "FolderAccess.swift", "PrivilegedFolderReader.swift",
             "HelperPrototype/BridgeProtocol.swift", "HelperPrototype/Shared.swift", "HelperPrototype/RequestState.swift",
             "HelperPrototype/RecoveryState.swift", "HelperPrototype/BundlePolicy.swift"]]
         app_sources.append(str(sparkle.parent / "ScannerIdentity.swift"))

@@ -24,6 +24,8 @@ func launchDiagnostic(_ phase:String,_ item:NSStatusItem?=nil) {
 }
 
 func runTestMode() throws -> Bool {
+    // Checked first so the exclusion test mode never reaches normal startup.
+    if SpotlightExclusionHarness.requested(CommandLine.arguments) { SpotlightExclusionHarness.run() }
     if CommandLine.arguments.contains("--updater-self-test") {
         print(testModeMarker)
         precondition(Bundle.main.bundleIdentifier?.hasPrefix("local.monitor.updater-test.") == true, "Use the isolated updater fixture")
@@ -47,6 +49,8 @@ func runTestMode() throws -> Bool {
     }
     if CommandLine.arguments.contains("--self-test") {
         print(testModeMarker)
+        try SpotlightExclusionControls.selfTest()
+        try SpotlightExclusionHarness.selfTest()
         let scanWarning=DiskAlert(id:"scan:test",critical:false,title:"Scan",detail:"Denied",path:nil,measurementIssue:true)
         let spaceWarning=diskSpaceAlert(free:150*gib,capacity:1000*gib)!
         let criticalWarning=diskSpaceAlert(free:90*gib,capacity:1000*gib)!

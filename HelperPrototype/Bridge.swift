@@ -9,7 +9,8 @@ import Foundation
     static var deadlineReported = false
     static var started = ProcessInfo.processInfo.systemUptime
     static func emit(_ message: BridgeMessage) {
-        guard let data = try? JSONEncoder().encode(message), data.count < 2048 else { exit(2) }
+        // Bounded transport: 200 paths of at most 1024 bytes each, plus envelope.
+        guard let data = try? JSONEncoder().encode(message), data.count < 262_144 else { exit(2) }
         FileHandle.standardOutput.write(data + Data([10]))
     }
     static func finish(_ message: BridgeMessage) -> Never {
@@ -22,7 +23,7 @@ import Foundation
             return // No service object, IPC, registration or permission access.
         }
         guard CommandLine.arguments.count == 2,
-              ["measure", "cancel", "check"].contains(CommandLine.arguments[1]) else { exit(2) }
+              ["measure", "cancel", "check", "exclusions"].contains(CommandLine.arguments[1]) else { exit(2) }
         let operation = CommandLine.arguments[1]
         let c = NSXPCConnection(machServiceName: HelperIdentity.serviceID, options: .privileged)
         c.setCodeSigningRequirement(HelperIdentity.requirement(HelperIdentity.serviceID))
@@ -41,7 +42,17 @@ import Foundation
             proxy.cancel { accepted in finish(BridgeMessage(event: "cancelRequested", status: accepted ? 1 : 0)) }
         } else {
             proxy.ping { version in DispatchQueue.main.async {
-                guard version == 2 else { finish(BridgeMessage(event: "launchFailed", error: "Incompatible scanner")) }
+                guard version == 2 || version == 3 else { finish(BridgeMessage(event: "launchFailed", error: "Incompatible scanner")) }
+                if operation == "exclusions" {
+                    guard version >= 3 else { finish(BridgeMessage(event: "exclusions", exclusions: .failed("Scanner update required"))) }
+                    proxy.exclusions { data in DispatchQueue.main.async {
+                        guard data.count < 250_000, let list = try? JSONDecoder().decode(ExclusionList.self, from: data) else {
+                            finish(BridgeMessage(event: "exclusions", exclusions: .failed("Invalid scanner response")))
+                        }
+                        finish(BridgeMessage(event: "exclusions", exclusions: list))
+                    } }
+                    return
+                }
                 if operation == "check" {
                     proxy.checkAccess { status in DispatchQueue.main.async {
                         finish(BridgeMessage(event: "access", status: status))

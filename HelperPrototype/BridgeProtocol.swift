@@ -4,6 +4,7 @@ struct BridgeMessage: Codable {
     var event: String
     var status: Int? = nil
     var measurement: Measurement? = nil
+    var exclusions: ExclusionList? = nil
     var error: String? = nil
     var errorDomain: String? = nil
     var errorCode: Int? = nil

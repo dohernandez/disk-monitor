@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
 done
 case "$test_build" in
   0) build_dir="${build_dir:-$PWD/build}"; set -- ;;
-  1) build_dir="${build_dir:-$PWD/build/test}"; set -- -D DISK_MONITOR_TESTS tests/TestModes.swift ;;
+  1) build_dir="${build_dir:-$PWD/build/test}"; set -- -D DISK_MONITOR_TESTS tests/TestModes.swift tests/SpotlightExclusionHarness.swift ;;
   *) echo "TEST_BUILD must be 0 or 1" >&2; exit 1 ;;
 esac
 mkdir -p "$build_dir"
@@ -58,12 +58,12 @@ mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$build_dir/sparkle/LICENSE" "$app/Contents/Resources/SPARKLE-LICENSE"
 /usr/bin/ditto "$build_dir/sparkle/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 python3 taskfiles/build/scripts/scanner_identity.py "$build_dir"
-xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift Updates.swift FolderAccess.swift PrivilegedFolderReader.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Shared.swift HelperPrototype/RequestState.swift HelperPrototype/RecoveryState.swift HelperPrototype/BundlePolicy.swift "$build_dir/ScannerIdentity.swift" "$@" -F "$build_dir/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
+xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift Updates.swift SpotlightExclusions.swift FolderAccess.swift PrivilegedFolderReader.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Shared.swift HelperPrototype/RequestState.swift HelperPrototype/RecoveryState.swift HelperPrototype/BundlePolicy.swift "$build_dir/ScannerIdentity.swift" "$@" -F "$build_dir/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
 
 if [ -n "${SCANNER_SIGNING_SHA1:-}" ]; then
     host="$app"
     mkdir -p "$host/Contents/MacOS"
-    xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -parse-as-library -swift-version 5 -O -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" HelperPrototype/Shared.swift HelperPrototype/Measurement.swift HelperPrototype/Helper.swift "$build_dir/ScannerIdentity.swift" -o "$host/Contents/MacOS/Scanner"
+    xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -parse-as-library -swift-version 5 -O -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" HelperPrototype/Shared.swift HelperPrototype/Measurement.swift HelperPrototype/Exclusions.swift HelperPrototype/Helper.swift "$build_dir/ScannerIdentity.swift" -o "$host/Contents/MacOS/Scanner"
     xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -parse-as-library -swift-version 5 -O -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" HelperPrototype/Shared.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Bridge.swift "$build_dir/ScannerIdentity.swift" -framework ServiceManagement -o "$host/Contents/MacOS/ScannerBridge"
     codesign --force --options runtime --timestamp=none --sign "$SCANNER_SIGNING_SHA1" --identifier local.darien.diskmonitor.scanner.service "$host/Contents/MacOS/Scanner"
     codesign --force --options runtime --timestamp=none --sign "$SCANNER_SIGNING_SHA1" --identifier local.darien.diskmonitor.scanner.client "$host/Contents/MacOS/ScannerBridge"

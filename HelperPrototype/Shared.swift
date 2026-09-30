@@ -24,6 +24,8 @@ enum HelperIdentity {
     func ping(withReply reply: @escaping (Int) -> Void)
     func checkAccess(withReply reply: @escaping (Int) -> Void)
     func measure(withReply reply: @escaping (Data) -> Void)
+    // Protocol version 3: the Data volume's exclusion list, read-only, fixed file.
+    func exclusions(withReply reply: @escaping (Data) -> Void)
 }
 struct Measurement: Codable {
     var bytes: Int64?
@@ -32,4 +34,10 @@ struct Measurement: Codable {
     static func failed(_ reason: String) -> Measurement {
         Measurement(bytes: nil, finishedAt: Date(), error: reason)
     }
+}
+struct ExclusionList: Codable {
+    var paths: [String]?
+    var readAt: Date
+    var error: String?
+    static func failed(_ reason: String) -> ExclusionList { ExclusionList(paths: nil, readAt: Date(), error: reason) }
 }
