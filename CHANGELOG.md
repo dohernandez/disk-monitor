@@ -4,8 +4,6 @@
 
 - Run all project tooling through Taskfile namespaces; CI calls tasks and installs Task from a pinned, checksum-verified download.
 - Reject AI attribution in commit messages and PR descriptions (git hook and CI).
-- CI: one PR check per job (Commit messages, Branch name, Lint, Test and build); releases run in their own workflow after Checks pass on main; verified signatures are left to the main ruleset.
-- Keep GitHub rulesets as code (`taskfiles/devtools/rulesets/`, `task devtools:rulesets:export|diff|apply|remove`), as in genlayer-node.
 - Keep test launch modes (`--self-test`, `--updater-self-test`, `--diagnostics`, `--show`) out of release builds; they are compiled only into test builds.
 - Add signed Sparkle updates, manual checking and optional automatic updates.
 - Enforce owner-only cache permissions while preserving saved data.

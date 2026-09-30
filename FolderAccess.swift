@@ -77,6 +77,10 @@ final class FolderAccess {
         var elevated: Bool = false
     }
     private let reader: PrivilegedFolderReader
+    /// Exact Spotlight exclusion list via the root scanner; read-only.
+    func readSpotlightExclusions(completion: @escaping (Swift.Result<[String], SpotlightPrivacyError>) -> Void) {
+        reader.readExclusions(completion: completion)
+    }
     private let probe: (String) -> Check
     private var pending: [String: Root] = [:]
     private var revisions: [String: Int] = [:]

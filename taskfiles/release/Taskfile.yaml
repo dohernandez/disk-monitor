@@ -78,3 +78,12 @@ tasks:
     cmds:
       - python3 ./taskfiles/release/scripts/publish_release.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"
+
+  rules:
+    desc: Create or update the "Protect main" ruleset after its checks pass, and read it back
+    summary: |
+      Usage:
+        task release:rules -- --validated-ref <branch>
+    cmds:
+      - python3 ./taskfiles/release/scripts/apply_main_rules.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"

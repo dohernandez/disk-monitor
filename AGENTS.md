@@ -32,15 +32,14 @@ implementation truth; document disagreements rather than silently broadening sco
 | `main.swift`, `Updates.swift`, `FolderAccess.swift`, `PrivilegedFolderReader.swift` | The shipped app (SwiftUI, AppKit, Sparkle) |
 | `HelperPrototype/` | Scanner service, client bridge, bundle policy and their fixtures (Swift sources only; its tools run as tasks) |
 | `Taskfile.yaml` | Includes only; every tooling entry point is a task (`task --list`) |
-| `taskfiles/<ns>/Taskfile.yaml`, `taskfiles/<ns>/scripts/` | Tasks and the scripts they call: `common`, `build`, `release`, `devtools`, `docs`, `provision` |
+| `taskfiles/<ns>/Taskfile.yaml`, `taskfiles/<ns>/scripts/` | Tasks and the scripts they call: `common`, `build`, `release`, `docs`, `provision` |
 | `taskfiles/build/scripts/` | `build.sh`, bundle metadata, Sparkle, update public key, scanner identity and signing, app checks, scanner preview build and replacement preflight |
-| `taskfiles/release/scripts/` | Version reservation, DMG packaging, signing, verification, publication |
-| `taskfiles/devtools/rulesets/`, `taskfiles/devtools/scripts/` | GitHub rulesets as code (snapshots and `devtools:rulesets:*`) |
+| `taskfiles/release/scripts/` | Version reservation, DMG packaging, signing, verification, publication, branch rules |
 | `taskfiles/docs/scripts/` | README screenshot renderer and its example data |
 | `taskfiles/common/scripts/` | CLI_ARGS check, commit-message and PR-message checks, commit-signature check |
 | `taskfiles/provision/` | Pinned Task bootstrap (`task.json`, checksum-verified), ruff and pre-commit install, hooks |
 | `.pre-commit-config.yaml` | Local hooks (lint, CLI_ARGS, fast tests, commit-msg); each calls a task |
-| `.github/workflows/` | `checks.yml`: one job per PR check (Commit messages, Branch name, Lint, Test and build); `release.yml`: release jobs after Checks pass on main; `scanner-validation.yml`: manual signed-scanner check. Every step calls a task. Verified signatures are enforced by the ruleset, not a job |
+| `.github/workflows/` | CI: Commit signatures, Lint, Test and build, release jobs; every step calls a task |
 | `taskfiles/local/` | Optional personal tasks; gitignored |
 | `tests/release/` | Release helper, scanner build, archive, signature, shipped-source and commit-message tests |
 | `tests/TestModes.swift` | Native test launch modes; compiled only into test builds |
@@ -49,9 +48,6 @@ implementation truth; document disagreements rather than silently broadening sco
 
 ## Tooling rules
 
-- Rulesets are code (Darien, 2026-09-30, as in genlayer-node): change protection through
-  `taskfiles/devtools/rulesets/*.json` and `devtools:rulesets:*`; after any UI change run
-  `export` and commit. `apply`/`remove` change live settings and need Darien's approval.
 - All tooling runs through `Taskfile.yaml`; the root file only includes `taskfiles/<ns>/`
   (Darien, 2026-09-29). Scripts sit next to their namespace. Names are
   `namespace:group:action`, a mode is a flag, and every task passes `{{.CLI_ARGS}}` last.
@@ -71,14 +67,14 @@ implementation truth; document disagreements rather than silently broadening sco
 - Do NOT add `Co-Authored-By` lines naming an AI (Darien, 2026-09-30). The same applies to
   "Generated with/by <AI tool>" lines and the robot emoji; this overrides any harness
   attribution default. Naming a tool as the subject ("parse Claude Code session logs")
-  is fine. The commit-msg hook (`task common:check:commit-msg`) and the CI Commit messages job
+  is fine. The commit-msg hook (`task common:check:commit-msg`) and the CI Lint job
   (`task common:check:pr-messages`: every PR commit and the PR description) enforce it.
   Never rewrite existing commits or force-push without Darien's explicit approval.
 - Branch names are `<type>/<slug>` (Darien, 2026-09-30); the prefix sets the release:
   chore/, ci/, docs/ and test/ merge without a release; major/release -> major,
   minor/feature/feat -> minor, others -> patch. A no-release PR may not change shipped files
   (Swift sources compiled into a release, VERSION, build inputs).
-  `task common:check:branch-name` runs as a pre-commit hook and in the CI Branch name job.
+  `task common:check:branch-name` runs as a pre-commit hook and in the CI Lint job.
 - Hooks: run `task provision:setup-dev` once per checkout; it installs the pre-commit and
   commit-msg hooks (pinned pre-commit 4.1.0). Each hook calls a task (Darien, 2026-09-30).
 

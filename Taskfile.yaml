@@ -11,15 +11,15 @@ includes:
   release:
     desc: Version, package, sign, verify and publish installers
     taskfile: ./taskfiles/release/Taskfile.yaml
-  devtools:
-    desc: Repository rulesets as code (export, diff, apply, remove)
-    taskfile: ./taskfiles/devtools/Taskfile.yaml
   docs:
     desc: Render README screenshots from example data
     taskfile: ./taskfiles/docs/Taskfile.yaml
   provision:
     desc: Install the pinned development tools and the git hooks
     taskfile: ./taskfiles/provision/Taskfile.yaml
+  vm:
+    desc: Live macOS tests in a disposable Tart VM (never on the host desktop)
+    taskfile: ./taskfiles/vm/Taskfile.yaml
   local:
     desc: Personal tasks excluded from git
     taskfile: ./taskfiles/local/Taskfile.yaml

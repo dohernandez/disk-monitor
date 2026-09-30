@@ -950,71 +950,13 @@ struct FolderSettings: View {
 }
 struct SpotlightExclusionSettings: View {
     @ObservedObject var model: Model
-    @State private var expanded = false
-    @State private var message: String?
     var body: some View {
-        DisclosureGroup("Spotlight exclusions", isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Keep selected folders out of Spotlight search while Disk Monitor continues to measure them.")
-                Text("Open Spotlight settings, then Search Privacy (Spotlight Privacy on older macOS). Add a folder there, or drag a folder name below into that list.")
-                Button("Open Spotlight settings…") {
-                    if !NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.spotlight")!) {
-                        message = "Open System Settings → Spotlight → Search Privacy."
-                    }
-                }
-                Text("Suggestions from Caches & tools").fontWeight(.semibold)
-                let suggestions = model.spotlightSuggestedCaches
-                if suggestions.isEmpty { Text("No cache folders detected on this Mac.").foregroundStyle(Palette.secondary) }
-                ForEach(suggestions) { root in SpotlightSuggestionRow(root: root, remove: nil) }
-                let builtIn = Set(suggestions.map(\.path))
-                let custom = model.spotlightCustomSuggestions.filter { !builtIn.contains($0) }
-                if !custom.isEmpty {
-                    Text("Your folders").fontWeight(.semibold)
-                    ForEach(custom, id: \.self) { path in
-                        SpotlightSuggestionRow(root: Root(path: path, title: URL(fileURLWithPath: path).lastPathComponent),
-                                               remove: { model.removeSpotlightSuggestion(path) })
-                    }
-                }
-                Button("Add folder…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
-                    panel.prompt = "Add to suggestions"
-                    panel.message = "Save folders here to add to Spotlight Search Privacy. This does not change macOS exclusions."
-                    if panel.runModal() == .OK {
-                        model.addSpotlightSuggestions(panel.urls)
-                        message = panel.urls.contains { SpotlightSuggestions.normalized($0.path, indexPath: model.spotlightPath) == nil }
-                            ? "The Spotlight index itself is not an exclusion suggestion." : nil
-                    }
-                }
-                if let message { Text(message).foregroundStyle(Palette.secondary) }
-                Text("This is a suggestion list, not your current macOS exclusions. Confirm or remove exclusions in Search Privacy. Tracking checkboxes above only control size measurements.")
-                    .foregroundStyle(Palette.secondary)
-            }.padding(.top, 8).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Spotlight exclusions").fontWeight(.semibold)
+            Text("Manage which folders Spotlight searches. Size tracking stays unchanged.")
+                .foregroundStyle(Palette.secondary)
+            Button("Manage exclusions…") { SpotlightExclusionWindow.shared.show(model: model) }
         }
-    }
-}
-struct SpotlightSuggestionRow: View {
-    let root: Root
-    let remove: (() -> Void)?
-    var body: some View {
-        let url = URL(fileURLWithPath: root.path)
-        let exists = FileManager.default.fileExists(atPath: root.path)
-        HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Label(root.title, systemImage: "folder").fontWeight(.medium)
-                    .onDrag { NSItemProvider(object: url as NSURL) }
-                    .help("Drag into Spotlight Search Privacy")
-                Text(root.path).font(.caption).foregroundStyle(Palette.secondary).textSelection(.enabled)
-                    .lineLimit(2).truncationMode(.middle).help(root.path)
-                if !exists { Text("Folder not found").font(.caption).foregroundStyle(Palette.secondary) }
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            Menu {
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }.disabled(!exists)
-                Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(root.path, forType: .string) }
-                if let remove { Button("Remove from suggestions", action: remove) }
-            } label: { Image(systemName: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Actions for \(root.title)")
-        }.padding(.vertical, 3)
     }
 }
 struct RefreshSettings: View {

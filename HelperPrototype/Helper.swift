@@ -10,7 +10,10 @@ final class Service: NSObject, SpotlightService {
         lock.lock(); let current = cancellation; lock.unlock()
         current?.cancel(); reply(current != nil)
     }
-    func ping(withReply reply: @escaping (Int) -> Void) { reply(2) }
+    func ping(withReply reply: @escaping (Int) -> Void) { reply(3) }
+    func exclusions(withReply reply: @escaping (Data) -> Void) {
+        DispatchQueue.global(qos: .utility).async { reply((try? JSONEncoder().encode(SpotlightExclusionReader.read())) ?? Data()) }
+    }
     func checkAccess(withReply reply: @escaping (Int) -> Void) {
         DispatchQueue.global(qos: .utility).async { reply(SpotlightScanner.accessStatus()) }
     }
