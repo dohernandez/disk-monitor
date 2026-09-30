@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every new commit message, and the PR description, for AI attribution (CI policy job).
+"""Check every new commit message, and the PR description, for AI attribution (CI Lint job).
 
 Usage:
   python3 taskfiles/common/scripts/check_pr_messages.py --repo OWNER/NAME --sha SHA [--pr NUMBER]
@@ -11,8 +11,9 @@ Options:
             description are checked.
 
 Commits made through GitHub's signed commit API never run local git hooks, so CI
-repeats the commit-msg check: each commit gets check_commit_message.check (conventional
-subject and no AI attribution); the PR description gets the attribution check only.
+runs the SAME task the commit-msg hook runs, `task common:check:commit-msg`, on each
+message: every commit gets the full check (conventional subject, no AI attribution),
+the PR description gets `--attribution-only`.
 Needs `gh` with GH_TOKEN (read access). Project tooling (task
 common:check:pr-messages); not part of the shipped app.
 
@@ -24,10 +25,8 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_commit_message import attribution, check  # noqa: E402
 
 
 def gh(*args):
@@ -44,10 +43,23 @@ def messages(repo, sha, pr):
     return [(commit['sha'][:7], commit['commit']['message'], True)]
 
 
-def failures(items):
+def commit_msg_task(text, full):
+    """Run `task common:check:commit-msg` (the hook's task) on one message; return its errors."""
+    with tempfile.TemporaryDirectory(prefix='pr-message-') as directory:
+        message = Path(directory) / 'message.txt'
+        message.write_text(text)
+        command = ['task', 'common:check:commit-msg', '--'] + ([] if full else ['--attribution-only']) + [str(message)]
+        result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        return []
+    lines = [ln for ln in result.stderr.splitlines() if ln.startswith('commit message: ')]
+    return lines or ['common:check:commit-msg failed: ' + result.stderr.strip()]
+
+
+def failures(items, run=commit_msg_task):
     found = []
     for label, text, full in items:
-        found += ['%s: %s' % (label, error) for error in (check(text) if full else attribution(text))]
+        found += ['%s: %s' % (label, error) for error in run(text, full)]
     return found
 
 

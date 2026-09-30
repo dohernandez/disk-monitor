@@ -70,6 +70,9 @@ implementation truth; document disagreements rather than silently broadening sco
   is fine. The commit-msg hook (`task common:check:commit-msg`) and the CI Lint job
   (`task common:check:pr-messages`: every PR commit and the PR description) enforce it.
   Never rewrite existing commits or force-push without Darien's explicit approval.
+- Branch names are `<type>/<slug>` (Darien, 2026-09-30); the prefix sets the release bump
+  (major/release -> major, minor/feature/feat -> minor, others -> patch).
+  `task common:check:branch-name` runs as a pre-commit hook and in the CI Lint job.
 - Hooks: run `task provision:setup-dev` once per checkout; it installs the pre-commit and
   commit-msg hooks (pinned pre-commit 4.1.0). Each hook calls a task (Darien, 2026-09-30).
 

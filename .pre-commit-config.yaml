@@ -25,6 +25,13 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
         files: \.(py|swift|sh|ya?ml|json|plist)$
+      - id: branch-name
+        name: branch name sets the release bump (task common:check:branch-name)
+        entry: task common:check:branch-name
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
       - id: commit-msg
         name: conventional commit, no AI attribution (task common:check:commit-msg)
         entry: task common:check:commit-msg --

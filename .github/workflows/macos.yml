@@ -56,9 +56,15 @@ jobs:
         run: task common:lint
       - name: Check tasks pass CLI arguments
         run: task common:check:task-cli-args
-      # API-made commits skip the local commit-msg hook, so CI checks every new
-      # commit message (and the PR description) with the same script.
-      - name: Reject AI attribution in commit messages and PR description
+      # The PR branch prefix sets the release bump; a typo would ship as a patch.
+      - name: Check branch name
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: task common:check:branch-name -- --branch "$HEAD_REF"
+      # API-made commits skip the local commit-msg hook, so CI runs the hook's task
+      # (common:check:commit-msg) on every new commit message and the PR description.
+      - name: Check commit messages and PR description (common:check:commit-msg)
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

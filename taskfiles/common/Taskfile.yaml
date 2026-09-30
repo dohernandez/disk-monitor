@@ -67,8 +67,20 @@ tasks:
       - python3 ./taskfiles/common/scripts/check_commit_message.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"
 
+  check:branch-name:
+    desc: Check that a branch name is <type>/<slug>; its prefix sets the release version bump
+    summary: |
+      Without --branch, checks the current git branch (main and detached HEAD are skipped).
+
+      Usage:
+        task common:check:branch-name
+        task common:check:branch-name -- --branch feat/spotlight-exact-exclusions
+    cmds:
+      - python3 ./taskfiles/common/scripts/check_branch_name.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
   check:pr-messages:
-    desc: Check every new commit message and the PR description for AI attribution (CI policy job; needs gh and GH_TOKEN)
+    desc: Run check:commit-msg on every new PR commit and the PR description (CI Lint job; needs gh and GH_TOKEN)
     summary: |
       API-made commits skip local git hooks, so CI repeats the commit-msg check.
 

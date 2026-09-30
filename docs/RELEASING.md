@@ -32,9 +32,11 @@ Manual dispatch publishes only when run from `main`.
 Every PR runs:
 
 - **Commit signatures:** every new PR commit must be verified by GitHub.
-- **Lint:** the same tasks as the git hooks: `task common:lint`, `task common:check:task-cli-args`
-  and `task common:check:pr-messages` (every new commit message and the PR description; API-made
-  commits skip local hooks). Release jobs wait for it.
+- **Lint:** the same tasks as the git hooks: `task common:lint`, `task common:check:task-cli-args`,
+  `task common:check:branch-name` (PR branch prefix sets the release bump) and
+  `task common:check:pr-messages`, which runs `task common:check:commit-msg` on every new commit
+  and, with `--attribution-only`, on the PR description (API-made commits skip local hooks).
+  Release jobs wait for it.
 - **Test and build (arm64):** native macOS 15 build, release helper tests, native
   self-tests, signature integrity, DMG creation/verification and mounted-app checks.
 - **Test and build (x86_64):** the same checks on the Intel macOS 15 runner.
