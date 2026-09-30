@@ -38,7 +38,15 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           {
-            "context": "Commit signatures",
+            "context": "Commit messages",
+            "integration_id": 15368
+          },
+          {
+            "context": "Branch name",
+            "integration_id": 15368
+          },
+          {
+            "context": "Lint",
             "integration_id": 15368
           },
           {
@@ -47,10 +55,6 @@
           },
           {
             "context": "Test and build (x86_64)",
-            "integration_id": 15368
-          },
-          {
-            "context": "Lint",
             "integration_id": 15368
           }
         ]

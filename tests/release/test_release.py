@@ -2,6 +2,7 @@ import pathlib
 import sys
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(_ROOT / 'taskfiles/build/scripts'), str(_ROOT / 'taskfiles/release/scripts')]
+import json
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,16 @@ import bundle_info
 class ReleaseTests(unittest.TestCase):
     def test_first_release_is_stable(self):
         self.assertEqual(release.next_tag({}, 'feature/installers'), 'v1.0.0')
+    def test_ruleset_helper_finds_the_committed_ruleset(self):
+        import apply_main_rules
+        rules = json.loads((apply_main_rules.ROOT / '.github/main-ruleset.json').read_text())
+        self.assertIn('required_signatures', [r['type'] for r in rules['rules']])
+        contexts = [c['context'] for r in rules['rules'] if r['type'] == 'required_status_checks' for c in r['parameters']['required_status_checks']]
+        self.assertNotIn('Commit signatures', contexts)
+        workflow = (apply_main_rules.ROOT / '.github/workflows/checks.yml').read_text()
+        for context in contexts:
+            with self.subTest(context=context):
+                self.assertIn('name: ' + context.replace('(arm64)', '(${{ matrix.arch }})').replace('(x86_64)', '(${{ matrix.arch }})'), workflow)
     def test_branch_versioning(self):
         for branch, expected in [('fix/icon', 'v1.2.4'), ('hotfix/icon', 'v1.2.4'), ('deps/sparkle', 'v1.2.4'), ('feat/alert', 'v1.3.0'), ('feature/alert', 'v1.3.0'), ('major/api', 'v2.0.0'), ('release/api', 'v2.0.0')]:
             with self.subTest(branch=branch):

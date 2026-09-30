@@ -25,22 +25,26 @@ Apple’s guidance: [Open a Mac app from an unknown developer](https://support.a
 
 ## CI flow
 
-`.github/workflows/macos.yml` runs for PRs to `main`, pushes to `main` (including
-merges), and manual dispatch. Closing a PR without merging never publishes a release.
-Manual dispatch publishes only when run from `main`.
+Two workflows, so a PR lists only its real checks:
 
-Every PR runs:
+- `.github/workflows/checks.yml` ("Checks") runs for PRs to `main`, pushes to `main`
+  (including merges) and manual dispatch. One job per PR check row.
+- `.github/workflows/release.yml` ("Release") runs through `workflow_run` only after
+  Checks succeeded for a push or manual run on `main` in this repository. It checks out
+  the tested commit and downloads that run's app artifacts. Closing a PR without merging
+  never publishes a release.
 
-- **Commit signatures:** every new PR commit must be verified by GitHub.
-- **Lint:** the same tasks as the git hooks: `task common:lint`, `task common:check:task-cli-args`,
-  `task common:check:branch-name` (the PR branch prefix sets the release: chore/, ci/, docs/
-  and test/ release nothing and may not touch shipped files) and
-  `task common:check:pr-messages`, which runs `task common:check:commit-msg` on every new commit
-  and, with `--attribution-only`, on the PR description (API-made commits skip local hooks).
-  Release jobs wait for it.
-- **Test and build (arm64):** native macOS 15 build, release helper tests, native
-  self-tests, signature integrity, DMG creation/verification and mounted-app checks.
-- **Test and build (x86_64):** the same checks on the Intel macOS 15 runner.
+Every job installs Task 3 from the checksum pin in `taskfiles/provision/task.json`, then
+calls tasks only. Each Checks row runs the task its local git hook runs. Verified commit
+signatures are not a CI job: the "Protect main" ruleset enforces them itself.
+
+| Check | Task | What it enforces |
+|---|---|---|
+| **Commit messages** | `common:check:pr-messages` → `common:check:commit-msg` | Every new commit is a conventional commit without AI attribution; the PR description has no AI attribution (API-made commits skip local hooks) |
+| **Branch name** (PRs only) | `common:check:branch-name` | `<type>/<slug>` with a known type; chore/, ci/, docs/ and test/ release nothing and may not change shipped files |
+| **Lint** | `common:lint`, `common:check:task-cli-args` | ruff correctness lint; every task passes CLI arguments |
+| **Test and build (arm64)** | `common:test:release`, `build:*`, `release:package`, `release:archive` | Native macOS 15 build and test build, release helper tests, native self-tests, signature integrity, DMG creation/verification and mounted-app checks |
+| **Test and build (x86_64)** | same | The same checks on the Intel macOS 15 runner |
 
 Token Monitor additionally runs its Python accounting/observer suite with the
 bundled interpreter and a collector smoke test against a temporary empty home/state.
@@ -72,7 +76,8 @@ highest existing `vMAJOR.MINOR.PATCH` tag and the merged PR’s branch:
 |---|---|
 | `major*`, `release*` | Major |
 | `minor*`, `feature*`, `feat*` | Minor |
-| Anything else (`fix/`, `patch/`, `docs/`, dependencies) | Patch |
+| `chore/`, `ci/`, `docs/`, `test/` | None (no release; the branch may not change shipped files) |
+| Anything else (`fix/`, `patch/`, dependencies) | Patch |
 
 Direct main pushes and manual dispatch without a matching merged PR default to patch.
 Main protection is intended to prevent direct pushes. Never rename or move a release tag.
@@ -107,13 +112,17 @@ test build (`task build:app -- --test`). Updating the running local app remains 
 The intended rules live in `.github/main-ruleset.json`:
 
 - PR required; zero approving reviews for the current solo-maintainer workflow.
-- Verified signatures required for incoming commits.
-- All four checks above required from the GitHub Actions integration. Lint was added to the
-  committed ruleset on 2026-09-30; applying it live (`task release:rules`) needs Darien's OK.
+- Verified signatures required for incoming commits (GitHub's `required_signatures` rule;
+  there is no separate CI job for it).
+- Required from the GitHub Actions integration: **Commit messages**, **Branch name**,
+  **Lint**, **Test and build (arm64)** and **Test and build (x86_64)**.
 - Branch must be up to date before merging; review conversations must be resolved.
 - No force-pushes, deletions, or administrator bypass list for `main`.
 
-**Activation verified (2026-09-22): active.** This repository is public. GitHub
+**Activation verified (2026-09-22): active** with the earlier required checks (Commit
+signatures and both Test and build jobs). The committed file now lists the checks above;
+it takes effect only when `task release:rules` applies it, which needs Darien's approval.
+Pass a PR head as `--validated-ref`: Branch name runs on PRs only. This repository is public. GitHub
 Free enforces the rules above; secret scanning and push protection are also enabled.
 The server configuration was read back separately from the committed ruleset file.
 Use `task release:rules -- --validated-ref <branch>` only after the required

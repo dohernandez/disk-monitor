@@ -1,0 +1,133 @@
+name: Checks
+
+# One row per check on every PR: each job runs the task its git hook runs.
+# Verified commit signatures are enforced by the "Protect main" ruleset itself
+# (required_signatures), not by a job here.
+# Releases run separately (release.yml) after this workflow passes on main.
+# Every step runs a Taskfile task (task --list). Task itself is installed from a pinned,
+# checksum-verified download (taskfiles/provision/task.json), not a third-party action.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Superseded PR checks can stop. Each main commit keeps its own run.
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # API-made commits skip the local commit-msg hook, so CI runs the hook's task
+  # (common:check:commit-msg) on every new commit message and the PR description.
+  commit-messages:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Run common:check:commit-msg on every new commit and the PR description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: task common:check:pr-messages -- --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --pr "$PR_NUMBER"
+
+  # The PR branch prefix sets the release (chore/ci/docs/test: none); a typo would
+  # ship as a patch, and a no-release branch may not change shipped files.
+  branch-name:
+    name: Branch name
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Check the branch prefix and the release it produces
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: task common:check:branch-name -- --branch "$HEAD_REF" --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"
+
+  # Like genlayer-node's Lint job: CI calls the same tasks the git hooks call.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Install pinned ruff
+        run: task provision:install-ruff
+      - name: Lint Python
+        run: task common:lint
+      - name: Check tasks pass CLI arguments
+        run: task common:check:task-cli-args
+
+  build:
+    name: Test and build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Validate release logic
+        run: task common:test:release -- -v
+      - name: Build app
+        env:
+          APP_BUILD: ${{ github.run_number }}
+        run: task build:app -- --build-dir "$RUNNER_TEMP/build" --expect-arch "${{ matrix.arch }}"
+      - name: Build test app
+        run: task build:app -- --test --build-dir "$RUNNER_TEMP/test-build" --expect-arch "${{ matrix.arch }}"
+      - name: Check unprivileged scanner fixtures
+        run: task build:check:helper-fixtures -- "$RUNNER_TEMP/build"
+      - name: Verify update signatures and tamper rejection
+        env:
+          SPARKLE_TOOLS: ${{ runner.temp }}/build/sparkle
+        run: task build:check:signatures
+      - name: Run native self-tests
+        run: task build:check -- --test-build "$RUNNER_TEMP/test-build/Disk Monitor.app"
+      - name: Check isolated updater startup
+        run: task build:check:updater -- "$RUNNER_TEMP/test-build/Disk Monitor.app"
+      - name: Check packaged app
+        run: task build:check -- "$RUNNER_TEMP/build/Disk Monitor.app"
+
+      - name: Verify PR installer
+        if: github.event_name == 'pull_request'
+        run: task release:package -- --app "$RUNNER_TEMP/build/Disk Monitor.app" --version "$(cat VERSION)" --output "$RUNNER_TEMP/pr-installer"
+      - name: Archive tested app
+        run: task release:archive -- "$RUNNER_TEMP/build/Disk Monitor.app" "$RUNNER_TEMP/app.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-${{ matrix.arch }}
+          path: ${{ runner.temp }}/app.zip
+          if-no-files-found: error
+          retention-days: 7

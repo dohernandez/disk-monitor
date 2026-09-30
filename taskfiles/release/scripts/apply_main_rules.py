@@ -5,12 +5,15 @@ import json
 import subprocess
 from pathlib import Path
 
+# taskfiles/release/scripts/ -> repository root.
+ROOT = Path(__file__).resolve().parents[3]
+
 
 def api(path, *args):
     return json.loads(subprocess.check_output(['gh', 'api', path, *args], text=True))
 
 def apply(ref):
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     repo = json.loads(subprocess.check_output(['gh','repo','view','--json','nameWithOwner'],cwd=root,text=True))['nameWithOwner']
     specification = root / '.github/main-ruleset.json'
     rules = json.loads(specification.read_text())
