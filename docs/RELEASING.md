@@ -54,7 +54,10 @@ Disk self-tests use temporary saved-state paths, including permission-migration 
 After a main build passes all checks:
 
 1. Reserve a semantic version tag at the exact tested commit.
-2. Build the scanner-enabled app with its final release version and build number,
+2. Build the scanner-enabled app with its final release version and build number
+   (`task release:build-number`: the Checks run number plus 100, refused unless it is
+   above the highest build of every published release, because Sparkle offers an update
+   only to a higher build; v1.10.0 shipped build 8 after v1.9.1's 79 and was hidden),
    signing the host and internal executables with the dedicated release certificate.
 3. Create one DMG and SHA-256 file per architecture; verify each mounted image.
 4. Sign each final DMG and its architecture-specific appcast with Ed25519.
