@@ -66,14 +66,21 @@ jobs:
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
           sh build.sh
+      - name: Build test app
+        env:
+          TEST_BUILD: '1'
+          BUILD_DIR: ${{ runner.temp }}/test-build
+        run: sh build.sh
       - name: Check unprivileged scanner fixtures
         run: python3 scripts/check_helper_fixtures.py "$RUNNER_TEMP/build"
       - name: Verify update signatures and tamper rejection
         env:
           SPARKLE_TOOLS: ${{ runner.temp }}/build/sparkle
         run: python3 -B scripts/test_signatures.py
+      - name: Run native self-tests
+        run: python3 scripts/check_app.py --test-build "$RUNNER_TEMP/test-build/Disk Monitor.app"
       - name: Check isolated updater startup
-        run: python3 -B scripts/check_updater.py "$RUNNER_TEMP/build/Disk Monitor.app"
+        run: python3 -B scripts/check_updater.py "$RUNNER_TEMP/test-build/Disk Monitor.app"
       - name: Check packaged app
         run: python3 scripts/check_app.py "$RUNNER_TEMP/build/Disk Monitor.app"
 
@@ -159,8 +166,14 @@ jobs:
           python3 scripts/build_signed_scanner.py
           python3 scripts/check_app.py "$BUILD_DIR/Disk Monitor.app" --require-scanner
           python3 scripts/check_helper_fixtures.py "$BUILD_DIR"
-          python3 scripts/check_updater.py "$BUILD_DIR/Disk Monitor.app"
           ditto "$BUILD_DIR/Disk Monitor.app" "$RUNNER_TEMP/unpacked/Disk Monitor.app"
+      - name: Check isolated updater startup (test build of the same source)
+        env:
+          TEST_BUILD: '1'
+          BUILD_DIR: ${{ runner.temp }}/test-build
+        run: |
+          sh build.sh
+          python3 -B scripts/check_updater.py "$BUILD_DIR/Disk Monitor.app"
       - name: Create and verify installer
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}

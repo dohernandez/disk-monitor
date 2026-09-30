@@ -8,6 +8,31 @@ import tempfile
 from pathlib import Path
 from bundle_info import APP_NAME, BINARY, IDENTIFIER
 
+# Strings that only tests/TestModes.swift compiles in (long enough to be stored
+# as bytes, unlike Swift's inline small strings).
+TEST_MODE_MARKERS = (b'DISK_MONITOR_TEST_MODE', b'--updater-self-test', b'PASS: scanner, folders', b'DiskMonitor-launch-diagnostic')
+
+
+def test_markers(app):
+    binary = (Path(app) / 'Contents/MacOS' / BINARY).read_bytes()
+    return [marker.decode() for marker in TEST_MODE_MARKERS if marker in binary]
+
+
+def check_release_binary(app):
+    found = test_markers(app)
+    assert not found, 'Release binary contains test launch modes: ' + ', '.join(found)
+    print('PASS: release binary contains no test launch modes')
+
+
+def check_test_build(app):
+    """Run the native self-tests in a test build (TEST_BUILD=1)."""
+    app = Path(app).resolve()
+    assert len(test_markers(app)) == len(TEST_MODE_MARKERS), 'Not a test build; build it with TEST_BUILD=1 sh build.sh'
+    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+    output = subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--self-test'], check=True, timeout=120, capture_output=True, text=True).stdout
+    print(output, end='')
+    assert output.startswith('DISK_MONITOR_TEST_MODE'), 'Self-test did not run'
+
 
 def check(app, require_scanner=False):
     app = Path(app).resolve()
@@ -27,7 +52,7 @@ def check(app, require_scanner=False):
     assert (app/'Contents/Frameworks/Sparkle.framework').is_dir()
     assert (app/'Contents/Resources/SPARKLE-LICENSE').is_file()
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
-    subprocess.run([str(app / 'Contents/MacOS' / BINARY), '--self-test'], check=True, timeout=120)
+    check_release_binary(app)
     if has_scanner:
         from scanner_constraint import check as check_constraint
         check_constraint(app)
@@ -55,4 +80,10 @@ def check(app, require_scanner=False):
     print('PASS: ' + APP_NAME + ' ' + info['CFBundleShortVersionString'] + ' package')
 
 if __name__ == '__main__':
-    check(sys.argv[1], require_scanner='--require-scanner' in sys.argv[2:])
+    arguments = sys.argv[1:]
+    if arguments[:1] == ['--test-build'] and len(arguments) == 2:
+        check_test_build(arguments[1])
+    elif arguments and not arguments[0].startswith('-') and arguments[1:] in ([], ['--require-scanner']):
+        check(arguments[0], require_scanner=arguments[1:] == ['--require-scanner'])
+    else:
+        sys.exit('usage: check_app.py <release app> [--require-scanner] | --test-build <test app>')

@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT.name
 source = (ROOT / "main.swift").read_text()
-marker = 'if CommandLine.arguments.contains("--updater-self-test") {'
+marker = '// MARK: - Entry point'
 assert source.count(marker) == 1
 source = source.split(marker)[0]
 if APP == "disk-monitor":

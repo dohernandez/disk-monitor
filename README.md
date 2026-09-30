@@ -49,10 +49,14 @@ Intel separately; older macOS versions are not supported.
 git clone https://github.com/dohernandez/disk-monitor.git
 cd disk-monitor
 sh build.sh
-"build/Disk Monitor.app/Contents/MacOS/DiskMonitor" --self-test
-codesign --verify --deep --strict "build/Disk Monitor.app"
-open "build/Disk Monitor.app" --args --show
+TEST_BUILD=1 sh build.sh
+python3 scripts/check_app.py --test-build "build/test/Disk Monitor.app"
+python3 scripts/check_app.py "build/Disk Monitor.app"
+open "build/Disk Monitor.app"
 ```
+
+`TEST_BUILD=1` builds a separate test app in `build/test` with the native self-tests;
+the release app in `build` contains no test launch modes.
 
 The app lives in `build/Disk Monitor.app`. Run each command only after the preceding
 one succeeds. When updating a running copy, follow [safe replacement and recovery](docs/DEVELOPMENT.md).

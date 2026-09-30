@@ -41,10 +41,16 @@ jobs:
             build_dir="$RUNNER_TEMP/candidate-$candidate"
             python3 scripts/check_app.py "$build_dir/Disk Monitor.app"
             python3 scripts/check_helper_fixtures.py "$build_dir"
-            python3 scripts/check_updater.py "$build_dir/Disk Monitor.app"
             ditto -c -k --keepParent "$build_dir/Disk Monitor.app" "$RUNNER_TEMP/candidate-$candidate.zip"
           done
           python3 scripts/verify_scanner_pair.py "$RUNNER_TEMP/candidate-1/Disk Monitor.app" "$RUNNER_TEMP/candidate-2/Disk Monitor.app"
+      - name: Check isolated updater startup (test build of the same source)
+        env:
+          TEST_BUILD: '1'
+          BUILD_DIR: ${{ runner.temp }}/test-build
+        run: |
+          sh build.sh
+          python3 -B scripts/check_updater.py "$BUILD_DIR/Disk Monitor.app"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: scanner-validation-${{ matrix.arch }}

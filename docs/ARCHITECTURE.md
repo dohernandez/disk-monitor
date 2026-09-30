@@ -18,7 +18,7 @@ Use symbol names below to navigate, since line numbers change.
 | `LargestFolders`, `AlertPanel` | Cached rankings and attention panel |
 | `RefreshSettings`, `Dashboard` | Settings and 440 × 690 point popup |
 | `StatusBadgeView`, `AppDelegate` | AppKit status item, badge, popup lifecycle |
-| `--self-test` branch | Fixture scanner/model regression checks |
+| `tests/TestModes.swift` (test builds only) | `--self-test` fixture scanner/model regression checks, `--updater-self-test`, `--diagnostics`, `--show` |
 
 `Updates.swift` owns Sparkle startup, preferences and the Settings update controls.
 
@@ -28,7 +28,7 @@ The normal entry point creates NSApplication and AppDelegate. Model initializati
 loads preferences and saved readings, queries filesystem capacity, and schedules
 both timers on the main run loop in common mode. AppDelegate creates an accessory
 app (no Dock icon), status item, and transient NSPopover hosting the SwiftUI dashboard.
-After 0.6 seconds it calls `scanMissingRoots`. `--show` additionally opens the popup.
+After 0.6 seconds it calls `scanMissingRoots`. In test builds, `--show` additionally opens the popup.
 
 Model owns observable state. The UI and timer callbacks call it on the main thread.
 `scan` sets its busy flag before dispatching one serial root loop to a utility queue.

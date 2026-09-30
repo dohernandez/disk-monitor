@@ -9,7 +9,8 @@ implementation truth; document disagreements rather than silently broadening sco
 
 - Make the requested change only. Preserve the accepted version's behavior and user data.
 - Inspect current files before editing; another session may have changed them.
-- `main.swift` owns the app, model, scanner, and self-tests. `build.sh` packages it.
+- `main.swift` owns the app, model and scanner; `tests/TestModes.swift` owns the self-tests,
+  compiled only into test builds. `build.sh` packages it.
   `build/` is generated. Do not hand-patch the binary or system toolchain.
 - Follow [Development](docs/DEVELOPMENT.md) for build/test/restart/rollback. A build
   overwrites the local app bundle; preserve a working copy first for runtime changes.
@@ -56,7 +57,7 @@ implementation truth; document disagreements rather than silently broadening sco
 
 ## Validation required by change
 
-Build and run `--self-test` for runtime changes. Add focused regression coverage
+Build a test app (`TEST_BUILD=1 sh build.sh`) and run its `--self-test` for runtime changes. Add focused regression coverage
 when changing scanner, timers, persistence, alerts, or tree state. Exercise the
 relevant manual acceptance checks for UI changes; say if they remain unverified.
 Do not weaken tests to restore a previously rejected behavior. Keep validation

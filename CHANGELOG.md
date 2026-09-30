@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep test launch modes (`--self-test`, `--updater-self-test`, `--diagnostics`, `--show`) out of release builds; they are compiled only into test builds.
 - Add signed Sparkle updates, manual checking and optional automatic updates.
 - Enforce owner-only cache permissions while preserving saved data.
 

@@ -1,7 +1,13 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-build_dir="${BUILD_DIR:-$PWD/build}"
+# TEST_BUILD=1 compiles the native test launch modes (tests/TestModes.swift);
+# release builds never contain them.
+case "${TEST_BUILD:-0}" in
+  0) build_dir="${BUILD_DIR:-$PWD/build}"; set -- ;;
+  1) build_dir="${BUILD_DIR:-$PWD/build/test}"; set -- -D DISK_MONITOR_TESTS tests/TestModes.swift ;;
+  *) echo "TEST_BUILD must be 0 or 1" >&2; exit 1 ;;
+esac
 mkdir -p "$build_dir"
 build_dir="$(cd "$build_dir" && pwd)"
 app="$build_dir/Disk Monitor.app"
@@ -30,7 +36,7 @@ mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$build_dir/sparkle/LICENSE" "$app/Contents/Resources/SPARKLE-LICENSE"
 /usr/bin/ditto "$build_dir/sparkle/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 python3 scripts/scanner_identity.py "$build_dir"
-xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift Updates.swift FolderAccess.swift PrivilegedFolderReader.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Shared.swift HelperPrototype/RequestState.swift HelperPrototype/RecoveryState.swift HelperPrototype/BundlePolicy.swift "$build_dir/ScannerIdentity.swift" -F "$build_dir/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
+xcrun swiftc -D DISK_MONITOR -target "$architecture-apple-macos15.0" -vfsoverlay "$build_dir/toolchain-overlay.json" -Xcc -ivfsoverlay -Xcc "$build_dir/toolchain-overlay.json" -module-cache-path "$build_dir/module-cache" -swift-version 5 -O main.swift Updates.swift FolderAccess.swift PrivilegedFolderReader.swift HelperPrototype/BridgeProtocol.swift HelperPrototype/Shared.swift HelperPrototype/RequestState.swift HelperPrototype/RecoveryState.swift HelperPrototype/BundlePolicy.swift "$build_dir/ScannerIdentity.swift" "$@" -F "$build_dir/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -o "$app/Contents/MacOS/DiskMonitor" -framework Cocoa -framework SwiftUI
 
 if [ -n "${SCANNER_SIGNING_SHA1:-}" ]; then
     host="$app"

@@ -53,6 +53,7 @@ final class AppUpdates: NSObject, ObservableObject, SPUUpdaterDelegate, SPUStand
         updater.publisher(for: \.lastUpdateCheckDate).assign(to: &$lastCheck)
         do { try updater.start() } catch { failure = "Updates unavailable: " + error.localizedDescription }
     }
+    #if DISK_MONITOR_TESTS
     func testReminderCallbacks() {
         let updater = controller.updater
         recordPending("2.0", onQuit: true)
@@ -67,6 +68,7 @@ final class AppUpdates: NSObject, ObservableObject, SPUUpdaterDelegate, SPUStand
         precondition(responds(to: NSSelectorFromString("updater:userDidMakeChoice:forUpdate:state:")))
         precondition(responds(to: NSSelectorFromString("updater:willInstallUpdateOnQuit:immediateInstallationBlock:")))
     }
+    #endif
     func allowedSystemProfileKeys(for updater: SPUUpdater) -> [String]? { [] }
     func check() { controller.checkForUpdates(nil) }
     func setChecks(_ value: Bool) { controller.updater.automaticallyChecksForUpdates = value }

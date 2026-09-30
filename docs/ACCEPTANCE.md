@@ -7,7 +7,7 @@ space just to test an alert: use the pure function/model fixture instead.
 
 ## Automated baseline
 
-Build then run the binary with `--self-test` as described in
+Build a test app and run its self-test (`check_app.py --test-build`) as described in
 [Development](DEVELOPMENT.md). This checks scanner fixtures, asynchronous collapse,
 activity states, free-space boundaries, growth deduplication, partial-root alerts,
 cancellation alerts, and timer/preference behavior. It does not prove every manual

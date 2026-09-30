@@ -92,8 +92,9 @@ python3 scripts/package.py --app '/tmp/monitor-release-build/Disk Monitor.app' -
 ```
 
 The package helper makes a copy before changing metadata. It never installs the app
-or modifies the input bundle. Checks include running `--self-test` inside the mounted
-read-only image. Updating the running local app remains a separate deliberate step.
+or modifies the input bundle. Checks include confirming that the app inside the mounted
+read-only image contains no test launch modes; the native self-tests run on a separate
+test build (`TEST_BUILD=1`). Updating the running local app remains a separate deliberate step.
 
 ## Branch rules
 

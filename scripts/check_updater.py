@@ -1,4 +1,4 @@
-"""Start Sparkle in a disposable app identity, without checks, windows or installation."""
+"""Start Sparkle in a disposable identity of a test build (TEST_BUILD=1), without checks, windows or installation."""
 import plistlib
 import shutil
 import subprocess
@@ -6,9 +6,11 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from check_app import TEST_MODE_MARKERS, test_markers
 
 def check(app):
     app=Path(app)
+    assert len(test_markers(app))==len(TEST_MODE_MARKERS),'Needs a test build (TEST_BUILD=1); release builds have no --updater-self-test'
     with tempfile.TemporaryDirectory(prefix='monitor-updater-test-') as directory:
         fixture=Path(directory)/'Fixture.app';contents=fixture/'Contents';contents.mkdir(parents=True)
         shutil.copytree(app/'Contents/MacOS',contents/'MacOS')
