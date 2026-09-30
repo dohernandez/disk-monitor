@@ -6,6 +6,8 @@ on:
 permissions:
   contents: read
 
+# Every step runs a Taskfile task; Task is installed from a pinned, checksum-verified
+# download (taskfiles/provision/task.json) because these steps hold the scanner certificate.
 jobs:
   validate:
     if: github.ref == 'refs/heads/main'
@@ -24,27 +26,37 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Build two candidates with the same isolated signing identity
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Build candidate 1 with the isolated signing identity
         env:
           SCANNER_SIGNING_SHA1: ${{ vars.SCANNER_SIGNING_SHA1 }}
           SCANNER_P12_BASE64: ${{ secrets.SCANNER_P12_BASE64 }}
           SCANNER_P12_PASSWORD: ${{ secrets.SCANNER_P12_PASSWORD }}
-        run: |
-          for candidate in 1 2; do
-            export APP_BUILD="$candidate"
-            export BUILD_DIR="$RUNNER_TEMP/candidate-$candidate"
-            python3 scripts/build_signed_scanner.py
-          done
+          APP_BUILD: '1'
+          BUILD_DIR: ${{ runner.temp }}/candidate-1
+        run: task build:scanner-release
+      - name: Build candidate 2 with the same isolated signing identity
+        env:
+          SCANNER_SIGNING_SHA1: ${{ vars.SCANNER_SIGNING_SHA1 }}
+          SCANNER_P12_BASE64: ${{ secrets.SCANNER_P12_BASE64 }}
+          SCANNER_P12_PASSWORD: ${{ secrets.SCANNER_P12_PASSWORD }}
+          APP_BUILD: '2'
+          BUILD_DIR: ${{ runner.temp }}/candidate-2
+        run: task build:scanner-release
       - name: Validate candidates without registration or installation
         run: |
-          for candidate in 1 2; do
-            build_dir="$RUNNER_TEMP/candidate-$candidate"
-            python3 scripts/check_app.py "$build_dir/Disk Monitor.app"
-            python3 scripts/check_helper_fixtures.py "$build_dir"
-            python3 scripts/check_updater.py "$build_dir/Disk Monitor.app"
-            ditto -c -k --keepParent "$build_dir/Disk Monitor.app" "$RUNNER_TEMP/candidate-$candidate.zip"
-          done
-          python3 scripts/verify_scanner_pair.py "$RUNNER_TEMP/candidate-1/Disk Monitor.app" "$RUNNER_TEMP/candidate-2/Disk Monitor.app"
+          task build:check -- "$RUNNER_TEMP/candidate-1/Disk Monitor.app"
+          task build:check:helper-fixtures -- "$RUNNER_TEMP/candidate-1"
+          task release:archive -- "$RUNNER_TEMP/candidate-1/Disk Monitor.app" "$RUNNER_TEMP/candidate-1.zip"
+          task build:check -- "$RUNNER_TEMP/candidate-2/Disk Monitor.app"
+          task build:check:helper-fixtures -- "$RUNNER_TEMP/candidate-2"
+          task release:archive -- "$RUNNER_TEMP/candidate-2/Disk Monitor.app" "$RUNNER_TEMP/candidate-2.zip"
+          task build:check:scanner-pair -- "$RUNNER_TEMP/candidate-1/Disk Monitor.app" "$RUNNER_TEMP/candidate-2/Disk Monitor.app"
+      - name: Check isolated updater startup (test build of the same source)
+        run: |
+          task build:app -- --test --build-dir "$RUNNER_TEMP/test-build" --expect-arch "${{ matrix.arch }}"
+          task build:check:updater -- "$RUNNER_TEMP/test-build/Disk Monitor.app"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: scanner-validation-${{ matrix.arch }}

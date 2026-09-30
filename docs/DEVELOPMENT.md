@@ -7,11 +7,23 @@ building or restarting the app.
 ## Build and test
 
 ```sh
-sh -n build.sh
-sh build.sh > build.log 2>&1
-"build/Disk Monitor.app/Contents/MacOS/DiskMonitor" --self-test
-codesign --verify --deep --strict "build/Disk Monitor.app"
+task build:app > build.log 2>&1
+task build:app -- --test > build-test.log 2>&1
+task build:check -- --test-build "build/test/Disk Monitor.app"
+task build:check -- "build/Disk Monitor.app"
+task common:check
 ```
+
+`task --list` shows every task; each has `task --summary <name>` usage. `task build:app` takes
+`--test`, `--build-dir DIR` and `--expect-arch arm64|x86_64` (env `APP_VERSION`, `APP_BUILD`,
+`BUILD_DIR` still apply). `task common:check` runs the lint, the CLI-argument check and the fast
+tests; the pre-commit hook runs the same, so there is no need to run it again before committing.
+
+Test launch modes (`--self-test`, `--updater-self-test`, `--diagnostics`, `--show`) live in
+`tests/TestModes.swift` behind `#if DISK_MONITOR_TESTS` and are compiled only by
+`task build:app -- --test`, into `build/test` by default. `task build:check` fails if a release binary
+contains any of them; `tests/release/test_shipped_source.py` fails if shipped Swift sources
+reference them outside the guard.
 
 Keep the complete build log when diagnosing failure. A successful build creates
 `build/Disk Monitor.app`, writes Info.plist, and signs the bundle (ad-hoc for ordinary source builds; the
@@ -37,7 +49,7 @@ click behavior. Extend focused tests when changing those contracts.
 ## Command Line Tools workaround
 
 Some local CLT installations contain both `swift/module.modulemap` and
-`swift/bridging.modulemap`, causing duplicate SwiftBridging definitions. `build.sh`
+`swift/bridging.modulemap`, causing duplicate SwiftBridging definitions. `taskfiles/build/scripts/build.sh`
 creates a project-local empty module map and VFS overlay only when both exist.
 The overlay is passed to both Swift (`-vfsoverlay`) and Clang (`-Xcc -ivfsoverlay`).
 Do not remove one side without reproducing and checking the build. Never edit or
@@ -64,7 +76,7 @@ and binary deployment target before distribution; the mismatch is recorded in
 5. Launch the verified bundle once:
 
    ```sh
-   open "build/Disk Monitor.app" --args --show
+   open "build/Disk Monitor.app"
    ```
 
 6. Check the icon, settings, cached readings, and changed behavior. Normal launch
@@ -74,7 +86,7 @@ and binary deployment target before distribution; the mismatch is recorded in
 
 Building while the old process exists does not update its in-memory code. Explicit
 quit/relaunch avoids mistaking an old UI for the new version. Launch Services may
-reuse an existing instance, so `open --args --show` is not a reliable hot reload.
+reuse an existing instance, so `open` is not a reliable hot reload.
 
 ## Backups and rollback
 
@@ -82,7 +94,7 @@ For example, before a runtime edit:
 
 ```sh
 backup_dir="$(mktemp -d "$HOME/DiskMonitor-backup.XXXXXX")"
-cp main.swift build.sh "$backup_dir/"
+cp main.swift taskfiles/build/scripts/build.sh "$backup_dir/"
 ditto "build/Disk Monitor.app" "$backup_dir/Disk Monitor.app"
 printf '%s\n' "$backup_dir"
 ```
@@ -117,4 +129,4 @@ made afterward. There is no automated rollback or migration in this version.
 Visual inspection currently relies on the user or a deliberate manual check. ChatGPT
 Computer Use permissions are unrelated to running this app and are not a prerequisite.
 
-Menu bar recovery: AppDelegate is retained across app.run. DiskMonitor-status is the stable autosaveName; its own preferred-position key is seeded to 0 only when absent. The September 21 missing-icon incident was resolved by repositioning away from the notch, confirmed by the user; the lifetime guard alone did not resolve it. Launch --diagnostics logs startup and item geometry to /tmp/DiskMonitor-launch-diagnostic.jsonl. Match PID/time and compare frame to NSScreen.auxiliaryTopRightArea; isVisible alone is insufficient. Command-drag preserves the user’s chosen position. Do not reset global preferences or other apps.
+Menu bar recovery: AppDelegate is retained across app.run. DiskMonitor-status is the stable autosaveName; its own preferred-position key is seeded to 0 only when absent. The September 21 missing-icon incident was resolved by repositioning away from the notch, confirmed by the user; the lifetime guard alone did not resolve it. A test build (TEST_BUILD=1) launched with --diagnostics logs startup and item geometry to /tmp/DiskMonitor-launch-diagnostic.jsonl. Match PID/time and compare frame to NSScreen.auxiliaryTopRightArea; isVisible alone is insufficient. Command-drag preserves the user’s chosen position. Do not reset global preferences or other apps.

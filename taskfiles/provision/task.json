@@ -1,0 +1,10 @@
+{
+  "version": "3.43.3",
+  "url": "https://github.com/go-task/task/releases/download/v{version}/task_{platform}.tar.gz",
+  "sha256": {
+    "darwin_amd64": "4aab49ef373ca1b61b4cfb8011a73c1200f790cc7e783e36ef33052b90d47316",
+    "darwin_arm64": "39f692b91a95220aba5e9b7c8546475ac9dd133e92cefe97b741f917606deda0",
+    "linux_amd64": "9f93a694464addaf5205661fc43fc9b9fa2b31596731e91510b41811da79fe21",
+    "linux_arm64": "b52835656febfcbaaa4513b8aa7b7ff3b57361de482d6cec8c895710d8648625"
+  }
+}

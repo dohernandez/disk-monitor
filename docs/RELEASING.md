@@ -25,16 +25,26 @@ Apple’s guidance: [Open a Mac app from an unknown developer](https://support.a
 
 ## CI flow
 
-`.github/workflows/macos.yml` runs for PRs to `main`, pushes to `main` (including
-merges), and manual dispatch. Closing a PR without merging never publishes a release.
-Manual dispatch publishes only when run from `main`.
+Two workflows, so a PR lists only its real checks:
 
-Every PR runs:
+- `.github/workflows/checks.yml` ("Checks") runs for PRs to `main`, pushes to `main`
+  (including merges) and manual dispatch. One job per PR check row.
+- `.github/workflows/release.yml` ("Release") runs through `workflow_run` only after
+  Checks succeeded for a push or manual run on `main` in this repository. It checks out
+  the tested commit and downloads that run's app artifacts. Closing a PR without merging
+  never publishes a release.
 
-- **Commit signatures:** every new PR commit must be verified by GitHub.
-- **Test and build (arm64):** native macOS 15 build, release helper tests, native
-  self-tests, signature integrity, DMG creation/verification and mounted-app checks.
-- **Test and build (x86_64):** the same checks on the Intel macOS 15 runner.
+Every job installs Task 3 from the checksum pin in `taskfiles/provision/task.json`, then
+calls tasks only. Each Checks row runs the task its local git hook runs. Verified commit
+signatures are not a CI job: the "Protect main" ruleset enforces them itself.
+
+| Check | Task | What it enforces |
+|---|---|---|
+| **Commit messages** | `common:check:pr-messages` → `common:check:commit-msg` | Every new commit is a conventional commit without AI attribution; the PR description has no AI attribution (API-made commits skip local hooks) |
+| **Branch name** (PRs only) | `common:check:branch-name` | `<type>/<slug>` with a known type; chore/, ci/, docs/ and test/ release nothing and may not change shipped files |
+| **Lint** | `common:lint`, `common:check:task-cli-args` | ruff correctness lint; every task passes CLI arguments |
+| **Test and build (arm64)** | `common:test:release`, `build:*`, `release:package`, `release:archive` | Native macOS 15 build and test build, release helper tests, native self-tests, signature integrity, DMG creation/verification and mounted-app checks |
+| **Test and build (x86_64)** | same | The same checks on the Intel macOS 15 runner |
 
 Token Monitor additionally runs its Python accounting/observer suite with the
 bundled interpreter and a collector smoke test against a temporary empty home/state.
@@ -66,7 +76,8 @@ highest existing `vMAJOR.MINOR.PATCH` tag and the merged PR’s branch:
 |---|---|
 | `major*`, `release*` | Major |
 | `minor*`, `feature*`, `feat*` | Minor |
-| Anything else (`fix/`, `patch/`, `docs/`, dependencies) | Patch |
+| `chore/`, `ci/`, `docs/`, `test/` | None (no release; the branch may not change shipped files) |
+| Anything else (`fix/`, `patch/`, dependencies) | Patch |
 
 Direct main pushes and manual dispatch without a matching merged PR default to patch.
 Main protection is intended to prevent direct pushes. Never rename or move a release tag.
@@ -80,40 +91,48 @@ fixed. Do not delete the tag just to reclaim a version. Published releases are n
 overwritten by reruns. Incomplete drafts may have their assets replaced before publishing.
 
 `APP_VERSION`, `APP_BUILD` and `BUILD_DIR` support isolated builds. Without overrides,
-`sh build.sh` uses `VERSION`, build number 1, and `build/`. Keep source-build and
+`task build:app` uses `VERSION`, build number 1, and `build/`. Keep source-build and
 release-package versioning distinct: release packaging stamps the reserved version
 into both the bundle metadata and visible header.
 
 To build a local installer (use a new output folder if the name already exists):
 
 ```sh
-BUILD_DIR=/tmp/monitor-release-build sh build.sh
-python3 scripts/package.py --app '/tmp/monitor-release-build/Disk Monitor.app' --version 1.0.0 --output dist
+task build:app -- --build-dir /tmp/monitor-release-build
+task release:package -- --app '/tmp/monitor-release-build/Disk Monitor.app' --version 1.0.0 --output dist
 ```
 
 The package helper makes a copy before changing metadata. It never installs the app
-or modifies the input bundle. Checks include running `--self-test` inside the mounted
-read-only image. Updating the running local app remains a separate deliberate step.
+or modifies the input bundle. Checks include confirming that the app inside the mounted
+read-only image contains no test launch modes; the native self-tests run on a separate
+test build (`task build:app -- --test`). Updating the running local app remains a separate deliberate step.
 
-## Branch rules
+## Branch rules (rulesets as code)
 
-The intended rules live in `.github/main-ruleset.json`:
+Rulesets are code, as in genlayer-node (Darien, 2026-09-30). The committed snapshot is
+`taskfiles/devtools/rulesets/protect-main.json` ("Protect main"):
 
 - PR required; zero approving reviews for the current solo-maintainer workflow.
-- Verified signatures required for incoming commits.
-- All three checks above required from the GitHub Actions integration.
+- Verified signatures required for incoming commits (GitHub's `required_signatures` rule;
+  there is no separate CI job for it).
+- Required from the GitHub Actions integration: **Commit messages**, **Branch name**,
+  **Lint**, **Test and build (arm64)** and **Test and build (x86_64)**.
 - Branch must be up to date before merging; review conversations must be resolved.
 - No force-pushes, deletions, or administrator bypass list for `main`.
 
-**Activation verified (2026-09-22): active.** This repository is public. GitHub
-Free enforces the rules above; secret scanning and push protection are also enabled.
-The server configuration was read back separately from the committed ruleset file.
-Use `scripts/apply_main_rules.py --validated-ref <branch>` only after the required
-checks pass when deliberately updating the rules.
+| Task | What it does |
+|---|---|
+| `task devtools:rulesets:export` | Writes every live ruleset to a normalized snapshot (read-only on GitHub). Run it after any change in the GitHub UI, then commit. |
+| `task devtools:rulesets:diff` | Compares live rulesets with the snapshots; exit 2 on drift (read-only) |
+| `task devtools:rulesets:apply -- --validated-ref <PR head>` | Creates or updates live rulesets from the snapshots, then reads each back. Refuses unless every required check already passed on that ref; never deletes. **Needs Darien's approval.** |
+| `task devtools:rulesets:remove -- --name "Protect main"` | Deletes a live ruleset and its snapshot. **Needs Darien's approval.** |
 
-The helper checks the actual check names, integration and successful conclusions,
-then creates or updates only the ruleset named “Protect main” and reads it back.
-It never changes repository visibility, billing, unrelated rulesets, or credentials.
+The snapshot was exported from the live ruleset on 2026-09-30, which then required Commit
+signatures and both Test and build jobs; only its required checks were edited to the list
+above. `diff` shows exactly that change until it is applied. Pass a PR head as
+`--validated-ref`, because Branch name runs on PRs only. The repository is public; GitHub
+Free enforces these rules, and secret scanning and push protection are also enabled. The
+tooling never changes repository visibility, billing, unrelated settings or credentials.
 
 Signed commits can be made locally using a registered signing key, or through
 GitHub’s signed web/GraphQL commit interface. Unsigned PR commits can block a merge
@@ -138,7 +157,7 @@ for the app's active scan/collector to finish. No login item is added.
 
 The first release containing this feature requires one manual installation: version
 1.0.0 does not contain an updater. Subsequent releases use Sparkle 2.10.0, pinned by
-URL and SHA-256 in `scripts/sparkle.py`. Framework licenses remain inside the bundle.
+URL and SHA-256 in `taskfiles/build/scripts/sparkle.py`. Framework licenses remain inside the bundle.
 The installer **and the appcast** are Ed25519-signed. `SUPublicEDKey` is embedded in
 the app; `SURequireSignedFeed` and `SUVerifyUpdateBeforeExtraction` require verification
 before trusting feed content or extracting an update. SHA-256 sidecars alone do not
@@ -152,7 +171,7 @@ profile. Profiling is disabled and the delegate's profile allowlist is empty.
 
 ### Key custody and CI
 
-`scripts/update-config.json` contains only the repository and public key. Each app
+`taskfiles/build/scripts/update-config.json` contains only the repository and public key. Each app
 has a separate seed, stored locally in the login Keychain under Sparkle's account
 `dohernandez.disk-monitor`. An exported copy is installed as the `release` environment
 secret, never a repository file or PR secret. Exported temporary files are owner-only
@@ -170,10 +189,10 @@ and changed downloads, changed/unsigned feeds, and wrong keys fail.
 For local signature regression checks after a build:
 
 ```sh
-SPARKLE_TOOLS=build/sparkle python3 -B scripts/test_signatures.py
+SPARKLE_TOOLS=build/sparkle task build:check:signatures
 ```
 
-`scripts/check_updater.py` starts the embedded updater in a temporary app identity,
+`task build:check:updater -- <test build>` starts the embedded updater of a test build in a temporary app identity,
 with automatic options disabled and no update UI. No test replaces or launches an installed app. Full interactive update/relaunch and
 Gatekeeper acceptance on a clean Mac remain manual acceptance checks. Verify these
 before claiming end-to-end installation acceptance. An older signed feed can be
@@ -200,7 +219,7 @@ The obsolete nested scanner app layout is rejected by packaging. The client’s
 --bundle-self-test checks that it resolves Disk Monitor as its containing app without
 registering, connecting to a service or requesting access.
 
-Run scripts/test_scanner_build.py and, for an isolated signed build,
+Run `task common:test:release` (tests/release/test_scanner_build.py) and, for an isolated signed build,
 `DiskMonitor --scanner-package-self-test` before any installer acceptance. Neither
 command registers or measures. Live cancellation, guided setup, update/reapproval,
 restart and clean-Mac acceptance are separate from successful compilation.
@@ -211,7 +230,7 @@ There is no feature flag that can silently omit it. Missing credentials fail the
 release. `--require-scanner` checks the rebuilt app, staged app and mounted installer.
 PR jobs and unsigned source builds use no release credentials and remain unprivileged.
 
-`scripts/build_signed_scanner.py` rejects PR and non-main execution, imports the
+`task build:scanner-release` (taskfiles/build/scripts/build_signed_scanner.py) rejects PR and non-main execution, imports the
 certificate into a disposable CI keychain, verifies its fingerprint, builds the
 checked-out commit and restores/deletes its temporary keychain in a finally block.
 Credentials are stripped from the build subprocess environment. The dedicated

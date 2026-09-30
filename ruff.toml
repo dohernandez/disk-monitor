@@ -1,0 +1,6 @@
+# Lint for correctness only (task common:lint). Formatting is not enforced: the
+# existing compact style is kept, so a lint run never rewrites accounting code.
+extend-exclude = [".tools", "build", "dist"]
+
+[lint]
+select = ["F", "E9", "PLE"]

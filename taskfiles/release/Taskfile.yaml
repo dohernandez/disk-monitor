@@ -1,0 +1,80 @@
+version: "3"
+
+tasks:
+  version:
+    desc: Reserve or reuse the semantic tag of HEAD on main, or report release=false for chore/ci/docs/test (reads RELEASE_BRANCH; writes GITHUB_OUTPUT)
+    cmds:
+      - python3 ./taskfiles/release/scripts/release_version.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  version:branch:
+    desc: Find the merged PR branch of a main commit and export RELEASE_BRANCH
+    summary: |
+      Usage:
+        task release:version:branch -- --repo dohernandez/disk-monitor --sha <sha>
+    cmds:
+      - python3 ./taskfiles/release/scripts/merged_branch.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  archive:
+    desc: Zip a tested app bundle, keeping its parent folder name
+    summary: |
+      Usage:
+        task release:archive -- "build/Disk Monitor.app" /tmp/app.zip
+    cmds:
+      - ditto -c -k --keepParent {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  unpack:
+    desc: Unzip a tested app archive
+    summary: |
+      Usage:
+        task release:unpack -- /tmp/app.zip /tmp/unpacked
+    cmds:
+      - ditto -x -k {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  copy-app:
+    desc: Replace an app bundle with another (ditto), e.g. the signed scanner release over the tested app
+    summary: |
+      Usage:
+        task release:copy-app -- "/tmp/scanner-release/Disk Monitor.app" "/tmp/unpacked/Disk Monitor.app"
+    cmds:
+      - ditto {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  package:
+    desc: Create and verify a DMG and its .sha256 from a copy of a built app (never installs)
+    summary: |
+      Always builds a new image and refuses to overwrite one.
+
+      Usage:
+        task release:package -- --app "build/Disk Monitor.app" --version 1.0.0 --output dist
+    cmds:
+      - python3 ./taskfiles/release/scripts/package.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  tools:
+    desc: Prepare pinned Sparkle signing tools and the update verifier
+    summary: |
+      Usage:
+        task release:tools -- --dir /tmp/signing
+        task release:tools -- --dir /tmp/verifier --verifier-only
+    cmds:
+      - python3 ./taskfiles/release/scripts/prepare_tools.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  sign:
+    desc: Sign a DMG and its appcast with Ed25519 (SPARKLE_PRIVATE_KEY; main release job only)
+    summary: |
+      Usage:
+        task release:sign -- --image dist/<name>.dmg --version <v> --build <n> --arch arm64 --tools /tmp/signing/sparkle
+    cmds:
+      - python3 ./taskfiles/release/scripts/sign_release.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  publish:
+    desc: Verify both installer sets against the committed public key, then publish (RELEASE_TAG, UPDATE_VERIFIER)
+    cmds:
+      - python3 ./taskfiles/release/scripts/publish_release.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"

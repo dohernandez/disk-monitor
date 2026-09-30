@@ -14,16 +14,16 @@ building. This is not ready for installation by other users.
 - `Client.swift`: guided preview with connection handshake and independent deadlines.
 - `RequestState.swift`: monotonic deadline and stale-response rules.
 - `Tests.swift`: disposable filesystem fixtures and request lifecycle regressions.
-- `verify_replacement.py`: read-only original-signature/build-number upgrade gate.
+- `task build:check:scanner-replacement` (`taskfiles/build/scripts/verify_scanner_replacement.py`): read-only original-signature/build-number upgrade gate.
 - `AuthTests.swift`: signed anonymous XPC authentication tests (no root service).
-- `build.py`: isolated development signing and test build; never registers or installs.
+- `task build:scanner-preview` (`taskfiles/build/scripts/scanner_preview.py`): isolated development signing and test build; never registers or installs.
 
 ## Developer validation
 
 On macOS 15 with Command Line Tools, use a new private output directory:
 
 ```sh
-PREVIEW_BUILD=4 python3 HelperPrototype/build.py /tmp/disk-helper-review-build
+PREVIEW_BUILD=4 task build:scanner-preview -- /tmp/disk-helper-review-build
 ```
 
 This creates an isolated test signing keychain and builds/tests the preview.
@@ -37,7 +37,7 @@ No root scan or password prompt is part of automated tests. Live registration,
 Full Disk Access, upgrade and removal tests are explicitly separate and remain
 incomplete. See the exact acceptance results and blockers in SECURITY.md.
 
-Before any replacement, run `python3 HelperPrototype/verify_replacement.py
+Before any replacement, run `task build:check:scanner-replacement --
 PREVIOUS_APP REPLACEMENT_APP` (with both paths quoted). It verifies the original
 app and helper signing requirements plus an increasing build number. A new signing
 identity is not an update; do not install it over an approved helper. This preflight

@@ -7,7 +7,7 @@ space just to test an alert: use the pure function/model fixture instead.
 
 ## Automated baseline
 
-Build then run the binary with `--self-test` as described in
+Build a test app and run its self-test (`task build:check -- --test-build`) as described in
 [Development](DEVELOPMENT.md). This checks scanner fixtures, asynchronous collapse,
 activity states, free-space boundaries, growth deduplication, partial-root alerts,
 cancellation alerts, and timer/preference behavior. It does not prove every manual
@@ -88,7 +88,7 @@ Alert categories: red ! for critical free space; orange ! for low free space or 
 
 ## Updates and privacy
 
-- Run `SPARKLE_TOOLS=<build-dir>/sparkle python3 -B scripts/test_signatures.py`.
+- Run `SPARKLE_TOOLS=<build-dir>/sparkle task build:check:signatures`.
   Valid signed fixtures pass; changed installers, unsigned/changed feeds and wrong
   keys must fail. PR CI repeats this with temporary keys on both architectures.
 - Verify cache migration preserves data, sets owner-only modes and rejects links.

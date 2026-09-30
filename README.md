@@ -48,11 +48,18 @@ Intel separately; older macOS versions are not supported.
 ```sh
 git clone https://github.com/dohernandez/disk-monitor.git
 cd disk-monitor
-sh build.sh
-"build/Disk Monitor.app/Contents/MacOS/DiskMonitor" --self-test
-codesign --verify --deep --strict "build/Disk Monitor.app"
-open "build/Disk Monitor.app" --args --show
+task build:app
+task build:app -- --test
+task build:check -- --test-build "build/test/Disk Monitor.app"
+task build:check -- "build/Disk Monitor.app"
+open "build/Disk Monitor.app"
 ```
+
+All project tooling runs through [Task](https://taskfile.dev). To contribute, install the pinned
+Task if you don't have it (`python3 taskfiles/provision/scripts/install_task.py --dir ~/.local/bin`),
+run `task provision:setup-dev` once (pinned lint tool and git hooks), then `task --list`.
+`task build:app -- --test` builds a separate test app in `build/test` with the native
+self-tests; the release app in `build` contains no test launch modes.
 
 The app lives in `build/Disk Monitor.app`. Run each command only after the preceding
 one succeeds. When updating a running copy, follow [safe replacement and recovery](docs/DEVELOPMENT.md).

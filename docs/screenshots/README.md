@@ -1,13 +1,13 @@
 # Documentation screenshots
 
 These PNGs render the current app’s SwiftUI views with illustrative data from
-`fixture.swift`. They are not captured from a live monitor or an account, and are
+`taskfiles/docs/scripts/fixture.swift`. They are not captured from a live monitor or an account, and are
 not evidence of real usage, disk capacity, provider limits, or model availability.
 
 From the project root on macOS with Command Line Tools installed:
 
 ```sh
-python3 docs/screenshots/render.py
+task docs:screenshots
 ```
 
 The script creates a temporary source copy and executable, selects the documented
@@ -29,14 +29,14 @@ button is disabled and its version label says Preview in documentation images.
 
 The Settings preview uses a taller canvas to show controls normally reached by scrolling.
 
-Render only the illustrative manual Spotlight action with `python3 docs/screenshots/render.py spotlight` (set `SPARKLE_TOOLS` for an isolated build). This never invokes the action or authorization.
+Render only the illustrative manual Spotlight action with `task docs:screenshots -- spotlight` (set `SPARKLE_TOOLS` for an isolated build). This never invokes the action or authorization.
 
 Render the expanded **Spotlight exclusions** suggestions with
-`python3 docs/screenshots/render.py exclusions`. This uses example cache readings
+`task docs:screenshots -- exclusions`. This uses example cache readings
 for detection and never changes macOS exclusions. For isolated builds set
 `SPARKLE_TOOLS=<BUILD_DIR>/sparkle`; the renderer also uses that build's generated
 `ScannerIdentity.swift` and the app's shared access types without starting them.
 
 Render the fixed protected-folder feedback states with
-`python3 docs/screenshots/render.py access`. These are illustrative observations;
+`task docs:screenshots -- access`. These are illustrative observations;
 no access check, reader connection, scan or permission prompt is performed.

@@ -1,0 +1,92 @@
+version: "3"
+
+tasks:
+  test:
+    desc: Run the fast tests (release helpers, shipped-source and commit-message checks; no build)
+    cmds:
+      - task: test:release
+
+  test:release:
+    desc: Run the release helper tests, the shipped-source check and the commit-message check tests
+    summary: |
+      Usage:
+        task common:test:release
+        task common:test:release -- -v
+    cmds:
+      - python3 -m unittest discover -s tests/release -t . {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  lint:
+    desc: Lint the Python code with the pinned ruff (task provision:install-ruff)
+    summary: |
+      Usage:
+        task common:lint
+        task common:lint -- --statistics
+    cmds:
+      - '"{{.ROOT_DIR}}/.tools/ruff/bin/ruff" check . {{.CLI_ARGS}}'
+    dir: "{{.ROOT_DIR}}"
+
+  lint:fix:
+    desc: Apply ruff's safe fixes
+    cmds:
+      - '"{{.ROOT_DIR}}/.tools/ruff/bin/ruff" check --fix . {{.CLI_ARGS}}'
+    dir: "{{.ROOT_DIR}}"
+
+  precommit:
+    desc: Run the git hooks on all files, as a commit would (no need to run them again before committing)
+    summary: |
+      A commit runs the same hooks by itself, so run this only to check before you commit, not in addition.
+
+      Usage:
+        task common:precommit
+        task common:precommit -- --verbose
+    cmds:
+      - pre-commit run --all-files {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:
+    desc: Run every repository check (the pre-commit hook runs the same)
+    cmds:
+      - task: lint
+      - task: check:task-cli-args
+      - task: test
+
+  check:task-cli-args:
+    desc: No task drops `-- --flag` before the command that parses flags
+    cmds:
+      - python3 ./taskfiles/common/scripts/check_task_cli_args.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:commit-msg:
+    desc: Check a commit message (conventional commit, no AI attribution); the commit-msg hook runs it
+    summary: |
+      Usage:
+        task common:check:commit-msg -- .git/COMMIT_EDITMSG
+        task common:check:commit-msg -- --attribution-only pr-description.md
+    cmds:
+      - python3 ./taskfiles/common/scripts/check_commit_message.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:branch-name:
+    desc: Check that a branch name is <type>/<slug>; its prefix sets the release (chore/ci/docs/test do not release)
+    summary: |
+      Without --branch, checks the current git branch (main and detached HEAD are skipped).
+
+      Usage:
+        task common:check:branch-name
+        task common:check:branch-name -- --branch feat/spotlight-exact-exclusions
+        task common:check:branch-name -- --branch chore/x --repo dohernandez/disk-monitor --pr 35
+    cmds:
+      - python3 ./taskfiles/common/scripts/check_branch_name.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  check:pr-messages:
+    desc: Run check:commit-msg on every new PR commit and the PR description (CI Commit messages job; needs gh and GH_TOKEN)
+    summary: |
+      API-made commits skip local git hooks, so CI repeats the commit-msg check.
+
+      Usage:
+        task common:check:pr-messages -- --repo dohernandez/disk-monitor --sha <sha> --pr <number>
+    cmds:
+      - python3 ./taskfiles/common/scripts/check_pr_messages.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
