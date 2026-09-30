@@ -1,0 +1,27 @@
+version: "3"
+
+tasks:
+  golden:
+    desc: Build the golden macOS 15 test VM (VM-only signing identity, Accessibility granted); refuses to replace one
+    summary: |
+      Needs Tart (~/.local/bin/tart) and the Cirrus base image. Headless; nothing on the host desktop.
+
+      Usage:
+        task vm:golden -- --app "build/test/Disk Monitor.app"
+        task vm:golden -- --app "build/test/Disk Monitor.app" --name disk-monitor-golden
+    cmds:
+      - bash ./taskfiles/vm/scripts/golden.sh {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  run:
+    desc: One disposable live run in a clone of the golden VM; results in ~/.local/state/disk-monitor/vm/<run>/
+    summary: |
+      Clones the golden VM, installs the test build, runs it in the VM's GUI session, saves the
+      result file, then stops and deletes the clone. Never runs on the host desktop.
+
+      Usage:
+        task vm:run -- "build/test/Disk Monitor.app" DiskMonitor-exclusion-results.log --spotlight-exclusion-test --run-scenarios
+        task vm:run -- "build/test/Disk Monitor.app" DiskMonitor-exclusion-accessibility.txt --spotlight-exclusion-test --dump-accessibility
+    cmds:
+      - bash ./taskfiles/vm/scripts/vm-run.sh {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"

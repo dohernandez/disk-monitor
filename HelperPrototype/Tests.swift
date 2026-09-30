@@ -30,10 +30,36 @@ import Security
         for input in ["-1\t\(target)", "9223372036854775807\t\(target)", "12\t/tmp/other", "12\t\(target)\nerror", "12\t\(target)/child", String(repeating: "x", count: 300)] {
             precondition(SpotlightScanner.parse(Data(input.utf8)) == nil)
         }
+        func plist(_ value: Any) -> Data { try! PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0) }
+        precondition(SpotlightExclusionReader.parse(plist(["Exclusions": ["/Users/a/Library/Caches/", "/opt/x"]])).paths == ["/Users/a/Library/Caches/", "/opt/x"])
+        precondition(SpotlightExclusionReader.parse(plist(["Stores": [:]])).paths == [], "A missing key means no exclusions")
+        precondition(SpotlightExclusionReader.parse(plist(["Exclusions": []])).paths == [])
+        for bad: Any in [["Exclusions": "x"], ["Exclusions": ["relative"]], ["Exclusions": ["/a\nb"]], ["Exclusions": [String](repeating: "/a", count: 201)], ["Exclusions": ["/" + String(repeating: "a", count: 1024)]], ["x"]] {
+            let result = SpotlightExclusionReader.parse(plist(bad))
+            precondition(result.paths == nil && result.error != nil, "Unexpected shapes are errors, never an empty list")
+        }
+        precondition(SpotlightExclusionReader.parse(Data("not a plist".utf8)).paths == nil)
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("Spotlight-helper-test-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: root) }
+        let exclusionRoot = fm.temporaryDirectory.appendingPathComponent("Spotlight-exclusions-test-" + UUID().uuidString)
+        try fm.createDirectory(at: exclusionRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: exclusionRoot) }
+        let config = exclusionRoot.appendingPathComponent("VolumeConfiguration.plist")
+        try plist(["Exclusions": ["/tmp/a"]]).write(to: config)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
+        precondition(SpotlightExclusionReader.read(config.path, owner: getuid()).paths == ["/tmp/a"])
+        precondition(SpotlightExclusionReader.read(config.path, owner: getuid() + 1).paths == nil, "Wrong owner fails closed")
+        try fm.setAttributes([.posixPermissions: 0o666], ofItemAtPath: config.path)
+        precondition(SpotlightExclusionReader.read(config.path, owner: getuid()).paths == nil, "Writable by others fails closed")
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
+        let linkedConfig = exclusionRoot.appendingPathComponent("linked.plist")
+        try fm.createSymbolicLink(at: linkedConfig, withDestinationURL: config)
+        precondition(SpotlightExclusionReader.read(linkedConfig.path, owner: getuid()).paths == nil, "Links are refused")
+        try Data(repeating: 32, count: (1 << 20) + 1).write(to: config)
+        precondition(SpotlightExclusionReader.read(config.path, owner: getuid()).paths == nil, "Oversized files are refused")
+        precondition(SpotlightExclusionReader.read(exclusionRoot.path, owner: getuid()).paths == nil, "Directories are refused")
         let package = root.appendingPathComponent("Fixture.app")
         let daemonDir = package.appendingPathComponent("Contents/Library/LaunchDaemons")
         let macos = package.appendingPathComponent("Contents/MacOS")

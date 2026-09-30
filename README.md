@@ -191,16 +191,16 @@ scanner setup or repair windows. The working signed privileged measurement remai
 internal to the single app; ordinary folders use direct filesystem access.
 Saved readings are kept on failures. See [usage details](docs/USAGE.md#shared-folder-access-and-measurement).
 
-## Spotlight exclusion suggestions
+## Spotlight exclusion controls
 
-**Settings → Caches & tools → Spotlight exclusions** lists detected cache/tool folders
-(including Anvil temporary files and Nix store) and offers **Add folder…** for personal
-paths such as worktrees. Tracking and Spotlight exclusions are independent.
+**Settings → Caches & tools → Manage exclusions…** opens a window for reading and
+changing macOS Search Privacy through Accessibility. Tracking remains independent.
+Checkboxes appear only after reading exact folder identities; failed or unsupported
+reads show Unknown. Custom folder selection requests a real exclusion operation.
 
-Open Spotlight settings, choose **Search Privacy** (or **Spotlight Privacy** on older
-macOS), and add or drag the folders you want excluded. The app saves custom suggestions;
-it does not report them as applied exclusions. Confirm or remove actual exclusions
-in macOS. See [the exclusion workflow](docs/USAGE.md#spotlight-exclusion-suggestions).
+This automation candidate requires live macOS acceptance before release. See
+[the workflow](docs/USAGE.md#spotlight-exclusion-controls) and
+[implementation references and validation limits](docs/SPOTLIGHT-AUTOMATION.md).
 
 ## Visible protected-folder access status
 

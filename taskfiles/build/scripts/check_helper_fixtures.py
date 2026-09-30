@@ -15,7 +15,7 @@ source = root / 'HelperPrototype'
 args = ['xcrun', 'swiftc', '-D', 'DISK_MONITOR', '-swift-version', '5', '-target', platform.machine() + '-apple-macos15.0', '-parse-as-library',
         '-vfsoverlay', str(build / 'toolchain-overlay.json'), '-Xcc', '-ivfsoverlay', '-Xcc', str(build / 'toolchain-overlay.json'),
         '-module-cache-path', str(build / 'scanner-fixture-modules')]
-args += [str(source / name) for name in ['Shared.swift', 'RequestState.swift', 'RecoveryState.swift', 'BundlePolicy.swift', 'Measurement.swift', 'Tests.swift']]
+args += [str(source / name) for name in ['Shared.swift', 'RequestState.swift', 'RecoveryState.swift', 'BundlePolicy.swift', 'Measurement.swift', 'Exclusions.swift', 'Tests.swift']]
 args += [str(identity), '-o', str(build / 'scanner-fixtures')]
 subprocess.run(args, check=True)
 subprocess.run([str(build / 'scanner-fixtures')], check=True, timeout=60)
@@ -24,7 +24,7 @@ subprocess.run([str(build / 'scanner-fixtures')], check=True, timeout=60)
 # Compilation never registers or executes these binaries.
 base = args[:args.index(str(source / 'Shared.swift'))]
 for name, files in [
-    ('scanner-compile-check', ['Shared.swift', 'Measurement.swift', 'Helper.swift']),
+    ('scanner-compile-check', ['Shared.swift', 'Measurement.swift', 'Exclusions.swift', 'Helper.swift']),
     ('bridge-compile-check', ['Shared.swift', 'BridgeProtocol.swift', 'Bridge.swift']),
 ]:
     subprocess.run(base + ['-D', 'DISK_MONITOR'] + [str(source / file) for file in files]

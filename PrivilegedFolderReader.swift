@@ -104,23 +104,36 @@ final class PrivilegedFolderReader {
             let pipe = Pipe(); process.standardOutput = pipe
             do { try process.run() }
             catch { deliver(BridgeMessage(event: "launchFailed", error: "Cannot start signed scanner client")); return }
+            // The exclusion list is the only large reply: at most 200 paths of 1024 bytes.
+            let lineLimit = operation == "exclusions" ? 262_144 : 2048
             var buffer = Data(); var sawFinal = false; var total = 0
             while true {
                 let chunk = pipe.fileHandleForReading.availableData
                 if chunk.isEmpty { break }
                 buffer.append(chunk); total += chunk.count
-                guard buffer.count <= 4096, total <= 65536 else { process.terminate(); break }
+                guard buffer.count <= lineLimit * 2, total <= max(65536, lineLimit * 2) else { process.terminate(); break }
                 while let newline = buffer.firstIndex(of: 10) {
                     let line = buffer.prefix(upTo: newline); buffer.removeSubrange(...newline)
-                    guard line.count < 2048, let reply = try? JSONDecoder().decode(BridgeMessage.self, from: line) else {
+                    guard line.count < lineLimit, let reply = try? JSONDecoder().decode(BridgeMessage.self, from: line) else {
                         process.terminate(); break
                     }
-                    if ["result", "status", "access", "launchFailed", "cancelRequested"].contains(reply.event) { sawFinal = true }
+                    if ["result", "status", "access", "launchFailed", "cancelRequested", "exclusions"].contains(reply.event) { sawFinal = true }
                     deliver(reply)
                 }
             }
             process.waitUntilExit()
             if !sawFinal { deliver(BridgeMessage(event: "bridgeExited", error: "Scanner client stopped without a complete response")) }
+        }
+    }
+    /// Exact Spotlight exclusion list of the Data volume, read (never written) by the root
+    /// scanner. Any failure is an error, never an empty list; callers show Unknown.
+    func readExclusions(completion: @escaping (Result<[String], SpotlightPrivacyError>) -> Void) {
+        guard packageValid, registration == 1, !uncertain else {
+            completion(.failure(.unavailable("Turn on Spotlight measurement in Settings to read exact exclusions."))); return
+        }
+        run("exclusions") { reply in
+            if reply.event == "exclusions", let paths = reply.exclusions?.paths { completion(.success(paths)); return }
+            completion(.failure(.unavailable(reply.exclusions?.error ?? reply.error ?? "The Spotlight scanner did not return the exclusion list.")))
         }
     }
     /// FolderAccess supplies whether the current tracked roots need this capability.

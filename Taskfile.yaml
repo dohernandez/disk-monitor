@@ -17,6 +17,9 @@ includes:
   provision:
     desc: Install the pinned development tools and the git hooks
     taskfile: ./taskfiles/provision/Taskfile.yaml
+  vm:
+    desc: Live macOS tests in a disposable Tart VM (never on the host desktop)
+    taskfile: ./taskfiles/vm/Taskfile.yaml
   local:
     desc: Personal tasks excluded from git
     taskfile: ./taskfiles/local/Taskfile.yaml
