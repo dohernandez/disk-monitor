@@ -193,14 +193,15 @@ Saved readings are kept on failures. See [usage details](docs/USAGE.md#shared-fo
 
 ## Spotlight exclusion controls
 
-**Settings → Caches & tools → Manage exclusions…** opens a window for reading and
-changing macOS Search Privacy through Accessibility. Tracking remains independent.
-Checkboxes appear only after reading exact folder identities; failed or unsupported
-reads show Unknown. Custom folder selection requests a real exclusion operation.
-
-This automation candidate requires live macOS acceptance before release. See
-[the workflow](docs/USAGE.md#spotlight-exclusion-controls) and
-[implementation references and validation limits](docs/SPOTLIGHT-AUTOMATION.md).
+**Settings → Spotlight exclusions** (collapsed by default) works like Caches & tools:
+the default folders have checkboxes, folders you add have **Remove**, and **Add folders…**
+excludes another folder. Checked means hidden from Spotlight search; sizes are still
+measured. The exact list is read by the Spotlight scanner when the section opens, so it
+needs "Spotlight index" checked under Caches & tools. Changing a folder needs
+Accessibility and briefly opens System Settings → Search Privacy to apply it, because
+macOS has no public API for this; Disk Monitor confirms the result before showing it.
+See [usage](docs/USAGE.md#spotlight-exclusion-controls) and
+[implementation notes](docs/SPOTLIGHT-AUTOMATION.md).
 
 ## Visible protected-folder access status
 

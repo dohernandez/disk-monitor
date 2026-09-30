@@ -405,8 +405,10 @@ the installed build 59 scanner. CI cannot replace that security acceptance.
 - Live release gate: disposable-folder refresh/add/remove round trip, exact before/
   after verification, duplicate basenames, spaces/Unicode, parent exclusions, denied
   Accessibility, focus interruption, stop, and unexpected Settings sheets.
-- Verify the editor remains visible when Settings takes focus. No fake checkmark,
-  success message or automatic retry may follow an unverified result.
+- The section reuses Caches & tools' `FolderChecklist` (checkboxes for defaults, Remove for
+  added folders), stays collapsed until opened, and reopens the popover on Settings after
+  a change. No fake checkmark, success message or automatic retry may follow an
+  unverified result.
 - Validate supported macOS versions/locales; unsupported layouts must report Unknown.
   No real cache exclusions or reindexing for tests. Build/fixtures do not establish
   live automation acceptance. See SPOTLIGHT-AUTOMATION.md for the current limitation.

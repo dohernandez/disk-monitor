@@ -422,6 +422,8 @@ extension SpotlightPrivacyAutomation {
 #endif
 
 final class SpotlightExclusionControls: ObservableObject {
+    static let shared = SpotlightExclusionControls()
+    @Published private(set) var activePath: String?
     @Published private(set) var snapshot: SpotlightPrivacySnapshot?
     @Published private(set) var busy = false
     @Published private(set) var error: String?
@@ -444,8 +446,9 @@ final class SpotlightExclusionControls: ObservableObject {
             return try SpotlightPrivacySnapshot(rows: try result.get().map { [$0] })
         }
     }
+    private var preview = false
     init(previewSnapshot: SpotlightPrivacySnapshot? = nil) {
-        if let previewSnapshot { snapshot = previewSnapshot; trusted = true; status = "Example exclusions · preview data" }
+        if let previewSnapshot { snapshot = previewSnapshot; trusted = true; preview = true; status = "Example exclusions · preview data" }
     }
     private let queue = DispatchQueue(label: "DiskMonitor.SpotlightExclusions")
     private let lock = NSLock()
@@ -473,9 +476,21 @@ final class SpotlightExclusionControls: ObservableObject {
     }
     #endif
     func refresh() { perform() }
-    func set(_ path: String, excluded: Bool) { perform(path: path, excluded: excluded) }
-    private func perform(path: String? = nil, excluded: Bool = false) {
-        guard !busy else { return }
+    // Reads the exact list each time Settings opens (a root read; no System Settings window).
+    func attach(_ model: Model) {
+        guard !preview else { return }
+        var testList = false
+        #if DISK_MONITOR_TESTS
+        testList = usesTestList
+        #endif
+        if !testList { exactList = SpotlightExclusionControls.scannerList(model.folderAccess) }
+        refreshPermission()
+        if !busy { refresh() }
+    }
+    // done(true) only after the exact list confirmed the change.
+    func set(_ path: String, excluded: Bool, done: ((Bool) -> Void)? = nil) { perform(path: path, excluded: excluded, done: done) }
+    private func perform(path: String? = nil, excluded: Bool = false, done: ((Bool) -> Void)? = nil) {
+        guard !busy else { done?(false); return }
         #if DISK_MONITOR_TESTS
         if let path, !permits(path) { error = "Test mode only changes the disposable fixture folders."; return }
         #endif
@@ -483,24 +498,26 @@ final class SpotlightExclusionControls: ObservableObject {
         // Reading the exact list needs no Accessibility; changing it does.
         guard trusted || (path == nil && exactList != nil) else { error = "Allow Disk Monitor in Accessibility, then retry."; return }
         lock.lock(); stopRequested = false; lock.unlock()
-        busy = true; error = nil
+        busy = true; error = nil; activePath = path
         status = path.map { excluded ? "Excluding \(URL(fileURLWithPath: $0).lastPathComponent)…" : "Including \(URL(fileURLWithPath: $0).lastPathComponent) in Spotlight…" } ?? "Reading macOS exclusions…"
         queue.async {
             let provider = self.exactList
             let outcome = Result { try SpotlightPrivacyAutomation(cancelled: { self.isCancelled() }, exactList: provider).run(path: path, excluded: excluded) }
             DispatchQueue.main.async {
-                self.busy = false
+                self.busy = false; self.activePath = nil
                 switch outcome {
                 case .success(let value):
                     self.snapshot = value
                     self.status = value == nil ? "Added in Search Privacy. Turn on Spotlight measurement to see exact exclusions."
                         : "Last checked at " + DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
-                    if !self.isCancelled(), NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" {
-                        SpotlightExclusionWindow.shared.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
+                    if path != nil, !self.isCancelled(), NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" {
+                        NSApp.activate(ignoringOtherApps: true)
+                        NotificationCenter.default.post(name: .diskMonitorReopenPopover, object: nil)
                     }
                 case .failure(let failure):
                     self.snapshot = nil; self.status = "Exclusion status is unknown."; self.error = failure.localizedDescription
                 }
+                if case .success(let value?) = outcome, let path { done?((value.covering(path) != nil) == excluded) } else { done?(false) }
             }
         }
     }
@@ -529,84 +546,64 @@ final class SpotlightExclusionControls: ObservableObject {
     #endif
 }
 
-final class SpotlightExclusionWindow: NSWindowController, NSWindowDelegate {
-    static let shared = SpotlightExclusionWindow()
-    let controls = SpotlightExclusionControls()
-    init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 620), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "Disk Monitor — Spotlight exclusions"
-        window.isReleasedWhenClosed = false; window.hidesOnDeactivate = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.minSize = NSSize(width: 480, height: 400)
-        super.init(window: window); window.delegate = self
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    func show(model: Model) {
-        if window?.isVisible != true { controls.invalidate() }
-        var testList = false
-        #if DISK_MONITOR_TESTS
-        testList = controls.usesTestList
-        #endif
-        if !testList { controls.exactList = SpotlightExclusionControls.scannerList(model.folderAccess) }
-        window?.contentView = NSHostingView(rootView: SpotlightExclusionEditor(model: model, controls: controls))
-        if window?.isVisible != true { window?.center() }
-        showWindow(nil); NSApp.activate(ignoringOtherApps: true)
-    }
-    func windowWillClose(_ notification: Notification) { controls.cancel() }
+extension Notification.Name {
+    // Applying a change activates System Settings, which closes the popover; reopen it after.
+    static let diskMonitorReopenPopover = Notification.Name("DiskMonitorReopenPopover")
 }
-struct SpotlightExclusionEditor: View {
+
+// Inline in Settings with the same FolderChecklist as "Caches & tools": default folders as
+// checkboxes, added folders with Remove. Checked means excluded from Spotlight; the state
+// comes from the root scanner's exact list. Added folders are excluded when added.
+struct SpotlightExclusionSettings: View {
     @ObservedObject var model: Model
     @ObservedObject var controls: SpotlightExclusionControls
-    var folders: [Root] {
-        var seen = Set<String>()
-        let other = (controls.snapshot?.paths.sorted() ?? []).map { Root(path: $0, title: URL(fileURLWithPath: $0).lastPathComponent) }
-        return (model.spotlightSuggestedCaches + model.spotlightCustomSuggestions.map { Root(path: $0, title: URL(fileURLWithPath: $0).lastPathComponent) } + other)
-            .filter { seen.insert($0.path).inserted }
+    // Collapsed by default, as before; the exact list is read when the section opens.
+    @State private var expanded: Bool
+    init(model: Model, controls: SpotlightExclusionControls = .shared, expanded: Bool = false) {
+        self.model = model; self.controls = controls; _expanded = State(initialValue: expanded)
+    }
+    var added: [Root] {
+        let defaults = Set(model.spotlightSuggestedCaches.map(\.path))
+        return model.spotlightCustomSuggestions.filter { !defaults.contains($0) }
+            .map { Root(path: $0, title: URL(fileURLWithPath: $0).lastPathComponent) }
+    }
+    // Only an explicit exclusion of this folder is undone; one excluded through a parent
+    // folder stays excluded and is just dropped from the list.
+    func remove(_ path: String) {
+        let explicit = controls.snapshot?.covering(path) == SpotlightPrivacySnapshot.path(path) && controls.snapshot?.ancestor(of: path) == nil
+        guard explicit, controls.trusted else { model.removeSpotlightSuggestion(path); return }
+        controls.set(path, excluded: false) { ok in if ok { model.removeSpotlightSuggestion(path) } }
+    }
+    var notice: String? {
+        if let error = controls.error { return error }
+        if controls.snapshot == nil { return controls.busy ? "Reading Spotlight exclusions…" : "Spotlight exclusions are unknown." }
+        if !controls.trusted { return "Allow Disk Monitor to change Spotlight settings." }
+        return nil
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Exclude folders from Spotlight").font(.title2.bold())
-            Text("Checked folders are excluded from Spotlight search. Disk Monitor continues measuring them.")
-            Text("Changes open and control macOS Search Privacy. Keep System Settings in front while an operation runs.").font(.callout).foregroundStyle(Palette.secondary)
-            if !controls.trusted { Text("Allow Disk Monitor to operate Spotlight’s Search Privacy controls.").font(.callout) }
-            HStack {
-                if !controls.trusted { Button("Allow Accessibility…") { controls.requestAccess() } }
-                Button("Refresh exclusions") { controls.refresh() }.disabled(controls.busy)
-                if controls.busy { ProgressView().controlSize(.small); Button("Stop") { controls.cancel() } }
+        DisclosureGroup("Spotlight exclusions", isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                FolderChecklist(
+                    defaults: model.spotlightSuggestedCaches,
+                    isOn: { controls.snapshot?.covering($0.path) != nil }, setOn: { controls.set($0.path, excluded: $1) },
+                    disabled: { controls.snapshot == nil || controls.busy || !controls.trusted || controls.snapshot?.ancestor(of: $0.path) != nil },
+                    added: added, remove: { remove($0.path) }, removeDisabled: controls.busy || controls.snapshot == nil,
+                    caption: "Checked folders are hidden from Spotlight search; sizes are still measured. Changing one briefly opens System Settings to apply it.",
+                    notice: notice, noticeAction: controls.trusted ? nil : ("Allow…", { controls.requestAccess() }),
+                    addTitle: "Add folders…", addDisabled: controls.busy || controls.snapshot == nil || !controls.trusted, add: chooseFolder)
             }
-            Text(controls.status).font(.callout).foregroundStyle(Palette.secondary)
-            if let error = controls.error { Text(error).foregroundStyle(Palette.uncertainty).textSelection(.enabled) }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(folders) { root in
-                        let covering = controls.snapshot?.covering(root.path)
-                        let ancestor = controls.snapshot?.ancestor(of: root.path)
-                        VStack(alignment: .leading, spacing: 3) {
-                            if controls.snapshot != nil {
-                                Toggle(root.title, isOn: Binding(get: { covering != nil }, set: { controls.set(root.path, excluded: $0) }))
-                                    .toggleStyle(.checkbox).disabled(controls.busy || ancestor != nil)
-                            } else {
-                                HStack {
-                                    Label(root.title + " · Unknown", systemImage: "questionmark.square").foregroundStyle(Palette.secondary)
-                                    Button("Exclude") { controls.set(root.path, excluded: true) }.disabled(controls.busy || !controls.trusted)
-                                }
-                            }
-                            Text(root.path).font(.caption).foregroundStyle(Palette.secondary).textSelection(.enabled)
-                            if let ancestor { Text("Excluded through \(ancestor). Change the parent exclusion to include this folder.").font(.caption).foregroundStyle(Palette.secondary) }
-                        }
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Button("Exclude another folder…") {
-                let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
-                panel.prompt = "Exclude from Spotlight"
-                guard panel.runModal() == .OK, let url = panel.url else { return }
-                guard SpotlightSuggestions.normalized(url.path, indexPath: model.spotlightPath) != nil else {
-                    controls.report("The Spotlight index cannot be added here."); return
-                }
-                model.addSpotlightSuggestions([url]); controls.set(url.path, excluded: true)
-            }.disabled(controls.busy || !controls.trusted)
-        }.onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in controls.refreshPermission() }
-        .padding(20).frame(minWidth: 440, minHeight: 360).foregroundStyle(Palette.primary).background(Palette.background)
+            .padding(.top, 6)
+            .onAppear { controls.attach(model) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in controls.refreshPermission() }
+    }
+    func chooseFolder() {
+        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.prompt = "Exclude from Spotlight"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard SpotlightSuggestions.normalized(url.path, indexPath: model.spotlightPath) != nil else {
+            controls.report("The Spotlight index cannot be excluded here."); return
+        }
+        model.addSpotlightSuggestions([url]); controls.set(url.path, excluded: true)
     }
 }

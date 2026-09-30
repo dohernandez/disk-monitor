@@ -434,8 +434,10 @@ System Settings; no AppleEvents, sudo, private database writes or scanner change
 `SpotlightPrivacySnapshot` requires exact row identities and handles parent coverage.
 Mutations compare the entire before/after list, then reopen for persistence checking.
 Errors invalidate the snapshot instead of presenting missing data as unchecked.
-`SpotlightExclusionWindow` is an ordinary retained, nonmodal app window that survives
-focus changes. No new process or separate app is installed. Live AX layout and path
+`SpotlightExclusionSettings` sits in Settings and reuses `FolderChecklist`, the same view as
+Caches & tools; the state comes from the root scanner's read-only exclusion list. After a
+change, the app reactivates and reopens the popover on Settings. No new process or separate
+app is installed. Live AX layout and path
 availability are a release gate; see [automation notes](SPOTLIGHT-AUTOMATION.md).
 
 ## Current-session access feedback

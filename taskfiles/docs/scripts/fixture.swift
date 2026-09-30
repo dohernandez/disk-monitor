@@ -46,12 +46,12 @@ let content: AnyView = accessPreview ? AnyView(VStack(alignment: .leading, spaci
         FolderAccess.Observation(root: Root(path: "/Users/example/Library/Caches", title: "Library caches"), activity: .attention("Full Disk Access is required.")),
         FolderAccess.Observation(root: accessRoot, activity: .scanning)])
     Spacer(minLength: 0)
-}.padding(.vertical, 20).frame(width: 440, height: 610).foregroundStyle(Palette.primary).background(Palette.background)) : exclusionsPreview ? AnyView(SpotlightExclusionEditor(model: model, controls: exclusionControls).frame(width: 560, height: 680)) : spotlightPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
+}.padding(.vertical, 20).frame(width: 440, height: 610).foregroundStyle(Palette.primary).background(Palette.background)) : exclusionsPreview ? AnyView(SpotlightExclusionSettings(model: model, controls: exclusionControls, expanded: true).padding(16).font(.system(size: 11)).frame(width: 440, height: 360, alignment: .topLeading).foregroundStyle(Palette.primary).background(Palette.background)) : spotlightPreview ? AnyView(VStack(alignment: .leading, spacing: 12) {
     Text("SHARED CACHES & TOOLS").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.secondary)
     FolderRow(model: model, root: Root(path: model.spotlightPath, title: "Spotlight index"))
 }.padding(16).frame(width: 440, height: 150).foregroundStyle(Palette.primary).background(Palette.background)) : AnyView(Dashboard(model: model))
 let view = NSHostingView(rootView: content.environment(\.controlActiveState, .active))
-view.frame = NSRect(x: 0, y: 0, width: exclusionsPreview ? 560 : 440, height: accessPreview ? 610 : exclusionsPreview ? 680 : spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
+view.frame = NSRect(x: 0, y: 0, width: 440, height: accessPreview ? 610 : exclusionsPreview ? 360 : spotlightPreview ? 150 : CommandLine.arguments.contains("settings") ? 1600 : 690)
 let window = PreviewWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
 window.contentView = view
 window.appearance = NSAppearance(named: .darkAqua)

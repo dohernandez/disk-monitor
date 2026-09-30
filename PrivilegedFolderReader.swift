@@ -129,7 +129,7 @@ final class PrivilegedFolderReader {
     /// scanner. Any failure is an error, never an empty list; callers show Unknown.
     func readExclusions(completion: @escaping (Result<[String], SpotlightPrivacyError>) -> Void) {
         guard packageValid, registration == 1, !uncertain else {
-            completion(.failure(.unavailable("Turn on Spotlight measurement in Settings to read exact exclusions."))); return
+            completion(.failure(.unavailable("Check “Spotlight index” under Caches & tools to read exclusions."))); return
         }
         run("exclusions") { reply in
             if reply.event == "exclusions", let paths = reply.exclusions?.paths { completion(.success(paths)); return }
