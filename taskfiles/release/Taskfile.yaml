@@ -16,6 +16,15 @@ tasks:
       - python3 ./taskfiles/release/scripts/merged_branch.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"
 
+  build-number:
+    desc: Choose the release build number (Checks run + 100) and fail if it is not above the latest published build
+    summary: |
+      Usage:
+        task release:build-number -- --repo dohernandez/disk-monitor --run-number 9 --tag v1.10.1
+    cmds:
+      - python3 ./taskfiles/release/scripts/build_number.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
   archive:
     desc: Zip a tested app bundle, keeping its parent folder name
     summary: |
