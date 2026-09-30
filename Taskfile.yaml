@@ -11,6 +11,9 @@ includes:
   release:
     desc: Version, package, sign, verify and publish installers
     taskfile: ./taskfiles/release/Taskfile.yaml
+  devtools:
+    desc: Repository rulesets as code (export, diff, apply, remove)
+    taskfile: ./taskfiles/devtools/Taskfile.yaml
   docs:
     desc: Render README screenshots from example data
     taskfile: ./taskfiles/docs/Taskfile.yaml

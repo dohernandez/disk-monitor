@@ -1,0 +1,152 @@
+name: Release
+
+# Runs only after "Checks" succeeded for a push (or manual run) on main in this
+# repository, and packages the exact apps that run tested. PRs never show these jobs.
+# Every step runs a Taskfile task; Task is installed from the checksum-verified pin,
+# because these jobs run Task with signing secrets in their environment.
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Each tested main commit keeps its own release run.
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Reserve release version
+    # Never for fork or PR runs: only a successful push/manual run of Checks on main here.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Read merged PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: task release:version:branch -- --repo "$GITHUB_REPOSITORY" --sha "$TESTED_SHA"
+      - name: Reserve or reuse tested commit tag
+        id: version
+        run: task release:version
+
+  package:
+    name: Release installers
+    needs: [version]
+    # chore/, ci/, docs/ and test/ merges release nothing; publish is skipped with this job.
+    if: needs.version.outputs.release == 'true'
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Download the app tested by Checks
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: app-${{ matrix.arch }}
+          path: ${{ runner.temp }}/download
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Unpack tested app
+        run: task release:unpack -- "$RUNNER_TEMP/download/app.zip" "$RUNNER_TEMP/unpacked"
+      - name: Build scanner-enabled release with isolated signing key
+        env:
+          SCANNER_SIGNING_SHA1: ${{ vars.SCANNER_SIGNING_SHA1 }}
+          SCANNER_P12_BASE64: ${{ secrets.SCANNER_P12_BASE64 }}
+          SCANNER_P12_PASSWORD: ${{ secrets.SCANNER_P12_PASSWORD }}
+          BUILD_DIR: ${{ runner.temp }}/scanner-release
+          APP_BUILD: ${{ github.event.workflow_run.run_number }}
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: task build:scanner-release
+      - name: Check scanner-enabled release
+        run: |
+          task build:check -- "$RUNNER_TEMP/scanner-release/Disk Monitor.app" --require-scanner
+          task build:check:helper-fixtures -- "$RUNNER_TEMP/scanner-release"
+          task release:copy-app -- "$RUNNER_TEMP/scanner-release/Disk Monitor.app" "$RUNNER_TEMP/unpacked/Disk Monitor.app"
+      - name: Check isolated updater startup (test build of the same source)
+        run: |
+          task build:app -- --test --build-dir "$RUNNER_TEMP/test-build" --expect-arch "${{ matrix.arch }}"
+          task build:check:updater -- "$RUNNER_TEMP/test-build/Disk Monitor.app"
+      - name: Create and verify installer
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          APP_BUILD: ${{ github.event.workflow_run.run_number }}
+        run: task release:package -- --app "$RUNNER_TEMP/unpacked/Disk Monitor.app" --version "$RELEASE_VERSION" --build "$APP_BUILD" --require-scanner
+      - name: Prepare pinned signing tools
+        run: task release:tools -- --dir "$RUNNER_TEMP/signing"
+      - name: Sign installer and update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          APP_BUILD: ${{ github.event.workflow_run.run_number }}
+        run: task release:sign -- --image "dist/Disk-Monitor-$RELEASE_VERSION-macOS-${{ matrix.arch }}.dmg" --version "$RELEASE_VERSION" --build "$APP_BUILD" --arch "${{ matrix.arch }}" --tools "$RUNNER_TEMP/signing/sparkle"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installer-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish complete release
+    needs: [version, package]
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: dist
+      - name: Install pinned Task (checksum-verified bootstrap)
+        run: python3 taskfiles/provision/scripts/install_task.py --dir "$RUNNER_TEMP/bin" --github-path
+      - name: Prepare public signature verifier
+        run: task release:tools -- --dir "$RUNNER_TEMP" --verifier-only
+      - name: Publish verified installers and signed feeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          UPDATE_VERIFIER: ${{ runner.temp }}/key_public
+        run: task release:publish

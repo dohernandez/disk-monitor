@@ -1,0 +1,38 @@
+version: "3"
+
+# Repository rulesets as code, as in genlayer-node (Darien, 2026-09-30).
+# Snapshots live in taskfiles/devtools/rulesets/*.json. apply and remove change
+# live GitHub settings: they need Darien's approval.
+tasks:
+  rulesets:export:
+    desc: Export live GitHub rulesets to taskfiles/devtools/rulesets/*.json (run after any ruleset change)
+    cmds:
+      - python3 ./taskfiles/devtools/scripts/sync_rulesets.py export {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  rulesets:diff:
+    desc: Compare live GitHub rulesets with the committed snapshots (exit 2 on drift)
+    cmds:
+      - python3 ./taskfiles/devtools/scripts/sync_rulesets.py diff {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  rulesets:apply:
+    desc: Create/update live rulesets from the snapshots once their required checks passed on a ref (never deletes)
+    summary: |
+      Refuses unless every required status check in the snapshots already passed on
+      --validated-ref, then reads each ruleset back. Needs Darien's approval.
+
+      Usage:
+        task devtools:rulesets:apply -- --validated-ref <branch-or-sha>
+    cmds:
+      - python3 ./taskfiles/devtools/scripts/sync_rulesets.py apply {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
+  rulesets:remove:
+    desc: Delete a live GitHub ruleset AND its snapshot by exact name (needs Darien's approval)
+    summary: |
+      Usage:
+        task devtools:rulesets:remove -- --name "Protect main"
+    cmds:
+      - python3 ./taskfiles/devtools/scripts/sync_rulesets.py remove {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"

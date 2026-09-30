@@ -81,7 +81,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
 
   check:pr-messages:
-    desc: Run check:commit-msg on every new PR commit and the PR description (CI Lint job; needs gh and GH_TOKEN)
+    desc: Run check:commit-msg on every new PR commit and the PR description (CI Commit messages job; needs gh and GH_TOKEN)
     summary: |
       API-made commits skip local git hooks, so CI repeats the commit-msg check.
 
@@ -89,13 +89,4 @@ tasks:
         task common:check:pr-messages -- --repo dohernandez/disk-monitor --sha <sha> --pr <number>
     cmds:
       - python3 ./taskfiles/common/scripts/check_pr_messages.py {{.CLI_ARGS}}
-    dir: "{{.ROOT_DIR}}"
-
-  check:commit-signatures:
-    desc: Require GitHub-verified signatures on every new commit (CI policy job; needs gh and GH_TOKEN)
-    summary: |
-      Usage:
-        task common:check:commit-signatures -- --repo dohernandez/disk-monitor --sha <sha> --pr <number>
-    cmds:
-      - python3 ./taskfiles/common/scripts/check_commit_signatures.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"
