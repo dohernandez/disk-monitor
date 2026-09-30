@@ -15,7 +15,9 @@ struct SpotlightPrivacySnapshot {
         if raw.hasPrefix("file://"), let url = URL(string: raw), url.isFileURL, url.host == nil || url.host == "" || url.host == "localhost" { value = url.path }
         else { value = raw }
         guard value.hasPrefix("/"), !value.contains("\n"), !value.contains("\r") else { return nil }
-        return URL(fileURLWithPath: value).standardizedFileURL.resolvingSymlinksInPath().path
+        // APFS names are normalization-insensitive, and the folder chooser reports decomposed
+        // (NFD) names; compare in one canonical (NFC) form.
+        return URL(fileURLWithPath: value).standardizedFileURL.resolvingSymlinksInPath().path.precomposedStringWithCanonicalMapping
     }
     // Every row must have an exact identity. A name such as "Caches" is ambiguous.
     init(rows: [[String]]) throws {
@@ -48,8 +50,14 @@ struct SpotlightPrivacySnapshot {
 final class SpotlightPrivacyAutomation {
     private var process: NSRunningApplication?
     private var application: AXUIElement?
+    private var openedSheet = false
     private let cancelled: () -> Bool
-    init(cancelled: @escaping () -> Bool = { false }) { self.cancelled = cancelled }
+    // The exact exclusion list, read by the root scanner (Search Privacy rows show only names).
+    // nil: add-only fallback, verified by row names.
+    private let exactList: (() throws -> SpotlightPrivacySnapshot)?
+    init(cancelled: @escaping () -> Bool = { false }, exactList: (() throws -> SpotlightPrivacySnapshot)? = nil) {
+        self.cancelled = cancelled; self.exactList = exactList
+    }
     private func fail(_ message: String) -> SpotlightPrivacyError { .unavailable(message) }
     private func check() throws {
         if cancelled() { throw fail("Operation stopped. Refresh to check the current macOS exclusions.") }
@@ -76,8 +84,8 @@ final class SpotlightPrivacyAutomation {
         }
         return result
     }
-    private func wait<T>(_ description: String, _ find: () throws -> T?) throws -> T {
-        let deadline = Date().addingTimeInterval(8)
+    private func wait<T>(_ description: String, timeout: TimeInterval = 8, _ find: () throws -> T?) throws -> T {
+        let deadline = Date().addingTimeInterval(timeout)
         repeat {
             try check()
             if let value = try find() { return value }
@@ -95,12 +103,18 @@ final class SpotlightPrivacyAutomation {
         try foreground()
         guard AXUIElementPerformAction(element, kAXPressAction as CFString) == .success else { throw fail("macOS could not activate the requested control.") }
     }
+    // The folder chooser runs in a separate service process, so keys posted to System
+    // Settings' pid never reach it. Like System Events, post to the frontmost app, and
+    // only after confirming System Settings is frontmost.
     private func key(_ code: CGKeyCode, flags: CGEventFlags = []) throws {
         try foreground()
-        guard let process, let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else { throw fail("Could not send the folder-selection command.") }
         down.flags = flags; up.flags = flags
-        down.postToPid(process.processIdentifier); up.postToPid(process.processIdentifier)
+        down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+    }
+    private func url(_ element: AXUIElement) -> String? {
+        (attribute(element, kAXURLAttribute) as? URL).flatMap { $0.isFileURL ? SpotlightPrivacySnapshot.path($0.path) : nil }
     }
     private func sheets(_ root: AXUIElement) throws -> [AXUIElement] {
         try descendants(root).dropFirst().filter { string($0, kAXRoleAttribute) == kAXSheetRole }
@@ -122,9 +136,11 @@ final class SpotlightPrivacyAutomation {
         guard try sheets(window).isEmpty else { throw fail("Close the open dialog in System Settings, then retry.") }
         let button: AXUIElement = try wait("Search Privacy") {
             let nodes = try self.descendants(window)
-            let named = nodes.filter {
-                self.string($0, kAXRoleAttribute) == kAXButtonRole &&
-                ["Search Privacy", "Search Privacy…", "Spotlight Privacy", "Spotlight Privacy…"].contains(self.string($0, kAXTitleAttribute))
+            let named = nodes.filter { node in
+                self.string(node, kAXRoleAttribute) == kAXButtonRole &&
+                [kAXTitleAttribute, kAXDescriptionAttribute].contains { name in
+                    ["Search Privacy", "Search Privacy…", "Spotlight Privacy", "Spotlight Privacy…"].contains(self.string(node, name))
+                }
             }
             if named.count == 1 { return named[0] }
             // Sequoia's privacy button can be unnamed. Use the documented content
@@ -142,7 +158,7 @@ final class SpotlightPrivacyAutomation {
             }
             return unnamed.count == 1 ? unnamed[0] : nil
         }
-        try press(button)
+        try press(button); openedSheet = true
         return try wait("Search Privacy dialog") {
             let found = try self.sheets(window)
             return found.count == 1 ? found[0] : nil
@@ -167,6 +183,11 @@ final class SpotlightPrivacyAutomation {
             }
         }
     }
+    // The name a Search Privacy row shows (its only identity on macOS 15).
+    private func rowName(_ row: AXUIElement) throws -> String? {
+        let names = try descendants(row).filter { string($0, kAXRoleAttribute) == kAXTextFieldRole }.map { string($0, kAXValueAttribute) }
+        return names.count == 1 ? names[0] : nil
+    }
     private func snapshot(_ sheet: AXUIElement) throws -> SpotlightPrivacySnapshot {
         try SpotlightPrivacySnapshot(rows: rows(sheet).map { try rowIdentity($0) })
     }
@@ -178,76 +199,214 @@ final class SpotlightPrivacyAutomation {
         guard found.count == 1 else { throw fail("The requested macOS control could not be identified unambiguously.") }
         return found[0]
     }
-    func run(path: String? = nil, excluded: Bool = false) throws -> SpotlightPrivacySnapshot {
-        let sheet = try privacySheet()
-        let before = try snapshot(sheet)
-        guard let requested = path, let path = SpotlightPrivacySnapshot.path(requested) else {
-            try press(namedButton(sheet, names: ["Done"])); return before
+    // After a failure, close any chooser and the Search Privacy sheet this operation
+    // opened, so System Settings is not left mid-dialog. Only while Settings is frontmost.
+    private(set) var cleanupNotes: [String] = []
+    // Test mode diagnostic: the chooser's accessibility tree when finding the folder failed.
+    private(set) var failureTree: [String] = []
+    private func closeOpened() {
+        guard openedSheet else { return }
+        closeSheets()
+    }
+    // Innermost first: Cancel a chooser, then Done on Search Privacy. Only while Settings is frontmost.
+    func closeSheets() {
+        for _ in 0..<3 {
+            guard let window = windows().first, let open = try? sheets(window), let innermost = open.last else {
+                cleanupNotes.append("no open dialogs"); return
+            }
+            let nested = (try? sheets(innermost)) ?? []
+            guard nested.isEmpty else { cleanupNotes.append("unexpected nested dialog"); return }
+            let buttons = (try? descendants(innermost).filter { string($0, kAXRoleAttribute) == kAXButtonRole }) ?? []
+            func named(_ name: String) -> AXUIElement? { buttons.first { string($0, kAXTitleAttribute) == name || string($0, kAXDescriptionAttribute) == name } }
+            let cancel = buttons.first { string($0, kAXIdentifierAttribute) == "CancelButton" }
+            guard let button = cancel ?? named("Cancel") ?? named("Done") else { cleanupNotes.append("no Cancel/Done in the open dialog"); return }
+            do { try press(button); cleanupNotes.append("closed a dialog") }
+            catch { cleanupNotes.append("could not close: " + error.localizedDescription); return }
+            Thread.sleep(forTimeInterval: 0.6)
         }
+    }
+    // Test mode: close dialogs left open in an already running System Settings.
+    func closeLeftovers() -> [String] {
+        guard let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first else { return ["System Settings is not running"] }
+        process = running
+        application = AXUIElementCreateApplication(running.processIdentifier)
+        AXUIElementSetMessagingTimeout(application!, 2)
+        _ = DispatchQueue.main.sync { running.activate() }
+        guard (try? wait("System Settings in front") { NSWorkspace.shared.frontmostApplication?.processIdentifier == running.processIdentifier ? true : nil }) != nil else {
+            return ["System Settings did not come to the front; nothing closed"]
+        }
+        closeSheets()
+        return cleanupNotes
+    }
+    func run(path: String? = nil, excluded: Bool = false) throws -> SpotlightPrivacySnapshot? {
+        do { return try operate(path: path, excluded: excluded) }
+        catch { closeOpened(); throw error }
+    }
+    private func operate(path requested: String?, excluded: Bool) throws -> SpotlightPrivacySnapshot? {
+        guard let exactList else { return try addByName(requested, excluded: excluded) }
+        // Reading needs no System Settings window: the root list is exact. When the scanner
+        // cannot answer, adding still works by name; checked state stays unknown.
+        let before: SpotlightPrivacySnapshot
+        do { before = try exactList() }
+        catch { if excluded, requested != nil { return try addByName(requested, excluded: true) }; throw error }
+        guard let requested, let path = SpotlightPrivacySnapshot.path(requested) else { return before }
         let covering = before.covering(path)
-        if excluded && covering != nil || !excluded && covering == nil {
-            try press(namedButton(sheet, names: ["Done"])); return before
-        }
+        if excluded && covering != nil || !excluded && covering == nil { return before }
+        let name = URL(fileURLWithPath: path).lastPathComponent
         if !excluded {
             guard before.ancestor(of: path) == nil, covering == path else {
                 throw fail("This folder is excluded through a parent folder. Change the parent exclusion first.")
             }
-            let matches = try rows(sheet).filter { try SpotlightPrivacySnapshot(rows: [rowIdentity($0)]).paths.contains(path) }
-            guard matches.count == 1 else { throw fail("Could not identify the exact folder to remove. No changes were made.") }
-            try foreground()
-            let list = try exclusionList(sheet)
-            guard AXUIElementSetAttributeValue(list, kAXSelectedRowsAttribute as CFString, [matches[0]] as CFArray) == .success,
-                  let selected = attribute(list, kAXSelectedRowsAttribute) as? [AXUIElement],
-                  selected.count == 1, CFEqual(selected[0], matches[0]) else {
-                throw fail("macOS could not select only the requested folder. No exclusions were removed.")
+            // Rows show only names, so a name shared by two excluded folders cannot be removed safely.
+            guard before.paths.filter({ URL(fileURLWithPath: $0).lastPathComponent == name }).count == 1 else {
+                throw fail("Two excluded folders are named “\(name)”. Remove this one in System Settings → Spotlight → Search Privacy.")
             }
-            try press(namedButton(sheet, names: ["Remove", "Remove selected item", "Remove selected items", "−", "-"]))
-        } else {
-            var directory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue else { throw fail("The folder no longer exists.") }
-            try press(namedButton(sheet, names: ["Add", "Add a folder", "Add item", "+"]))
-            let picker = try wait("folder chooser") {
-                let children = try self.sheets(sheet)
-                return children.count == 1 ? children[0] : nil
-            }
-            try key(5, flags: [.maskCommand, .maskShift])
-            let field: AXUIElement = try wait("Go to Folder") {
-                guard let app = self.application, let focused = self.attribute(app, kAXFocusedUIElementAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
-                let element = unsafeBitCast(focused, to: AXUIElement.self)
-                let dialogs = try self.sheets(picker)
-                guard dialogs.count == 1, try self.descendants(dialogs[0]).contains(where: { CFEqual($0, element) }) else { return nil }
-                return self.string(element, kAXRoleAttribute) == kAXTextFieldRole || self.string(element, kAXRoleAttribute) == kAXComboBoxRole ? element : nil
-            }
-            try foreground()
-            guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, path as CFString) == .success else { throw fail("Could not enter the folder path.") }
-            try key(36)
-            let choose: AXUIElement = try wait("folder confirmation") {
-                guard try self.sheets(picker).isEmpty else { return nil }
-                guard let button = self.attribute(picker, kAXDefaultButtonAttribute), CFGetTypeID(button) == AXUIElementGetTypeID() else { return nil }
-                let element = unsafeBitCast(button, to: AXUIElement.self)
-                return (self.attribute(element, kAXEnabledAttribute) as? Bool) == true ? element : nil
-            }
-            let selectedRows = try descendants(picker).filter {
-                (attribute($0, kAXSelectedAttribute) as? Bool) == true
-            }
-            let chosenPaths: Set<String>
-            if !selectedRows.isEmpty {
-                chosenPaths = try SpotlightPrivacySnapshot(rows: selectedRows.map { try rowIdentity($0) }).paths
-            } else { throw fail("macOS did not expose the selected folder's full path. No exclusion was added.") }
-            guard chosenPaths == [path] else { throw fail("The selected folder does not match the requested path. No exclusion was added.") }
-            try press(choose)
         }
-        let after: SpotlightPrivacySnapshot = try wait("macOS to confirm the exclusion change") {
+        let sheet = try privacySheet()
+        if excluded { try addFolder(path, in: sheet) } else { try removeRow(named: name, in: sheet) }
+        // macOS saves the list asynchronously; the root read is the persisted state.
+        let after: SpotlightPrivacySnapshot = try wait("macOS to save the exclusion change", timeout: 20) {
             guard try self.sheets(sheet).isEmpty else { return nil }
-            let value = try self.snapshot(sheet)
+            let value = try exactList()
             return value.matchesChange(from: before, path: path, excluded: excluded) ? value : nil
         }
         try press(namedButton(sheet, names: ["Done"]))
-        let reopened = try privacySheet()
-        let verified = try snapshot(reopened)
-        try press(namedButton(reopened, names: ["Done"]))
-        guard verified.paths == after.paths else { throw fail("macOS did not retain the expected exclusion change. Refresh and retry.") }
-        return verified
+        return after
+    }
+    // Fallback without the root list: add only, verified by the new row's name. Status stays unknown.
+    private func addByName(_ requested: String?, excluded: Bool) throws -> SpotlightPrivacySnapshot? {
+        guard excluded, let requested, let path = SpotlightPrivacySnapshot.path(requested) else {
+            throw fail("Exact exclusions need Spotlight measurement turned on. Folders can still be added.")
+        }
+        let sheet = try privacySheet()
+        let beforeNames = try rows(sheet).map { try rowName($0) }
+        guard !beforeNames.contains(nil) else { throw fail("macOS did not show the exclusion list. No changes were made.") }
+        try addFolder(path, in: sheet)
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        _ = try wait("macOS to show the new exclusion", timeout: 20) { () -> Bool? in
+            guard try self.sheets(sheet).isEmpty else { return nil }
+            let names = try self.rows(sheet).map { try self.rowName($0) }
+            return names.count == beforeNames.count + 1 && names.filter({ $0 == name }).count == beforeNames.filter({ $0 == name }).count + 1 ? true : nil
+        }
+        try press(namedButton(sheet, names: ["Done"]))
+        return nil
+    }
+    private func removeRow(named name: String, in sheet: AXUIElement) throws {
+        let matches = try rows(sheet).filter { try rowName($0) == name }
+        guard matches.count == 1 else { throw fail("Could not identify the exact folder to remove. No changes were made.") }
+        try foreground()
+        let list = try exclusionList(sheet)
+        guard AXUIElementSetAttributeValue(list, kAXSelectedRowsAttribute as CFString, [matches[0]] as CFArray) == .success,
+              let selected = attribute(list, kAXSelectedRowsAttribute) as? [AXUIElement],
+              selected.count == 1, CFEqual(selected[0], matches[0]) else {
+            throw fail("macOS could not select only the requested folder. No exclusions were removed.")
+        }
+        try press(namedButton(sheet, names: ["Remove", "Remove selected item", "Remove selected items", "−", "-",
+                                              "Remove the selected disk or folder to no longer exclude from indexing."]))
+    }
+    private func addFolder(_ path: String, in sheet: AXUIElement) throws {
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue else { throw fail("The folder no longer exists.") }
+        try press(namedButton(sheet, names: ["Add", "Add a folder", "Add item", "+", "Add folder or a disk to exclude from indexing."]))
+        let picker = try wait("folder chooser") {
+            let children = try self.sheets(sheet)
+            return children.count == 1 ? children[0] : nil
+        }
+        // Go to the parent, then select the exact folder row. Choosing the chooser's
+        // current directory is never accepted as proof of selection.
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        try key(5, flags: [.maskCommand, .maskShift])
+        let field: AXUIElement = try wait("Go to Folder") {
+            let fields = try self.descendants(picker).filter {
+                [kAXTextFieldRole, kAXComboBoxRole].contains(self.string($0, kAXRoleAttribute))
+                    && self.string($0, kAXSubroleAttribute) != kAXSearchFieldSubrole
+                    && (self.attribute($0, kAXFocusedAttribute) as? Bool) == true
+            }
+            return fields.count == 1 ? fields[0] : nil
+        }
+        try foreground()
+        guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, parent as CFString) == .success,
+              string(field, kAXValueAttribute) == parent else { throw fail("Could not enter the folder path. No exclusion was added.") }
+        try key(36)
+        // List view exposes rows (AXRow). Icon view (AXCollectionList, github.com/TamaT-LLC/openpath/pull/64)
+        // and column view (AXBrowser columns) expose plain AXLists of groups holding the AXURL item.
+        // Select the exact item; the selection's identity is verified before Choose.
+        let item: (element: AXUIElement, container: AXUIElement, attribute: String)
+        do { item = try wait("the folder in the chooser") {
+            let targets = try self.descendants(picker).filter { self.url($0) == path }
+            guard targets.count == 1 else { return nil }
+            var node = targets[0], previous = targets[0]
+            for _ in 0..<8 {
+                guard let parent = self.attribute(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+                previous = node; node = unsafeBitCast(parent, to: AXUIElement.self)
+                if self.string(previous, kAXRoleAttribute) == kAXRowRole { return (previous, node, kAXSelectedRowsAttribute) }
+                if self.string(node, kAXRoleAttribute) == kAXListRole {
+                    return (previous, node, kAXSelectedChildrenAttribute)
+                }
+            }
+            return nil
+        } } catch { var lines: [String] = []; try? tree(picker, into: &lines); failureTree = lines; throw error }
+        try foreground()
+        guard AXUIElementSetAttributeValue(item.container, item.attribute as CFString, [item.element] as CFArray) == .success else {
+            throw fail("macOS could not select the folder. No exclusion was added.")
+        }
+        let selected: [AXUIElement] = try wait("the folder selection") {
+            guard let items = self.attribute(item.container, item.attribute) as? [AXUIElement], items.count == 1, CFEqual(items[0], item.element) else { return nil }
+            return items
+        }
+        let chosenPaths = try SpotlightPrivacySnapshot(rows: selected.map { try rowIdentity($0) }).paths
+        guard chosenPaths == [path] else { throw fail("The selected folder does not match the requested path. No exclusion was added.") }
+        let byIdentifier = try descendants(picker).filter { string($0, kAXRoleAttribute) == kAXButtonRole && string($0, kAXIdentifierAttribute) == "OKButton" }
+        let choose = byIdentifier.count == 1 ? byIdentifier[0] : try namedButton(picker, names: ["Choose", "Open"])
+        guard (attribute(choose, kAXEnabledAttribute) as? Bool) == true else { throw fail("macOS did not enable Choose for this folder. No exclusion was added.") }
+        try press(choose)
+    }
+}
+
+// Test mode diagnostic: records how this macOS exposes the Spotlight pane and the
+// Search Privacy sheet. It opens the sheet and closes it with Done; no list changes.
+extension SpotlightPrivacyAutomation {
+    private func describe(_ element: AXUIElement) -> String {
+        var fields = [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute, kAXHelpAttribute, kAXValueAttribute, kAXURLAttribute].compactMap { name -> String? in
+            guard let value = attribute(element, name) else { return nil }
+            let text = (value as? URL)?.absoluteString ?? (value as? String) ?? (CFGetTypeID(value) == CFBooleanGetTypeID() ? "\(value)" : nil)
+            return text.map { name + "=" + String($0.prefix(160)).debugDescription }
+        }
+        var actions: CFArray?
+        if AXUIElementCopyActionNames(element, &actions) == .success, let names = actions as? [String], !names.isEmpty { fields.append("actions=\(names)") }
+        return fields.joined(separator: " ")
+    }
+    private func tree(_ root: AXUIElement, into lines: inout [String], depth: Int = 0) throws {
+        try check()
+        guard lines.count < 3000, depth < 40 else { return }
+        lines.append(String(repeating: "  ", count: depth) + describe(root))
+        for child in elements(root) { try tree(child, into: &lines, depth: depth + 1) }
+    }
+    func dump() throws -> [String] {
+        guard AXIsProcessTrusted() else { throw fail("Not trusted for Accessibility.") }
+        let opened = DispatchQueue.main.sync { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Spotlight-Settings.extension")!) }
+        guard opened else { throw fail("Could not open Spotlight settings.") }
+        process = try wait("System Settings") { NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first }
+        application = AXUIElementCreateApplication(process!.processIdentifier)
+        AXUIElementSetMessagingTimeout(application!, 2)
+        let window = try wait("Spotlight settings") { self.windows().first(where: { self.string($0, kAXTitleAttribute) == "Spotlight" }) }
+        Thread.sleep(forTimeInterval: 1)
+        var lines = ["== windows: " + windows().map { string($0, kAXTitleAttribute).debugDescription }.joined(separator: ", "), "== Spotlight window"]
+        try tree(window, into: &lines)
+        let candidates = try descendants(window).filter { node in
+            [kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute].contains { string(node, $0).localizedCaseInsensitiveContains("privacy") }
+                && string(node, kAXRoleAttribute) == kAXButtonRole
+        }
+        lines.append("== privacy button candidates: \(candidates.count)")
+        guard candidates.count == 1, try sheets(window).isEmpty else { return lines }
+        try press(candidates[0]); openedSheet = true
+        let sheet: AXUIElement = try wait("Search Privacy dialog") { let found = try self.sheets(window); return found.count == 1 ? found[0] : nil }
+        Thread.sleep(forTimeInterval: 1)
+        lines.append("== Search Privacy sheet")
+        try tree(sheet, into: &lines)
+        do { try press(namedButton(sheet, names: ["Done"])); lines.append("== closed with Done") }
+        catch { closeOpened(); lines.append("== Done not found; closed what was open") }
+        return lines
     }
 }
 
@@ -257,6 +416,21 @@ final class SpotlightExclusionControls: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var status = "Refresh to read the current macOS exclusions."
     @Published private(set) var trusted = AXIsProcessTrusted()
+    // Exact list from the root scanner; set by the window. Tests may supply their own.
+    var exactList: (() throws -> SpotlightPrivacySnapshot)?
+    var usesTestList = false
+    static func scannerList(_ access: FolderAccess) -> () throws -> SpotlightPrivacySnapshot {
+        return {
+            precondition(!Thread.isMainThread, "The scanner reply arrives on the main thread")
+            let semaphore = DispatchSemaphore(value: 0)
+            var result: Result<[String], SpotlightPrivacyError>?
+            DispatchQueue.main.async { access.readSpotlightExclusions { result = $0; semaphore.signal() } }
+            guard semaphore.wait(timeout: .now() + 20) == .success, let result else {
+                throw SpotlightPrivacyError.unavailable("The Spotlight scanner did not answer. Exclusion status is unknown.")
+            }
+            return try SpotlightPrivacySnapshot(rows: try result.get().map { [$0] })
+        }
+    }
     init(previewSnapshot: SpotlightPrivacySnapshot? = nil) {
         if let previewSnapshot { snapshot = previewSnapshot; trusted = true; status = "Example exclusions · preview data" }
     }
@@ -289,17 +463,21 @@ final class SpotlightExclusionControls: ObservableObject {
         guard !busy else { return }
         if let path, !permits(path) { error = "Test mode only changes the disposable fixture folders."; return }
         trusted = AXIsProcessTrusted()
-        guard trusted else { error = "Allow Disk Monitor in Accessibility, then retry."; return }
+        // Reading the exact list needs no Accessibility; changing it does.
+        guard trusted || (path == nil && exactList != nil) else { error = "Allow Disk Monitor in Accessibility, then retry."; return }
         lock.lock(); stopRequested = false; lock.unlock()
         busy = true; error = nil
         status = path.map { excluded ? "Excluding \(URL(fileURLWithPath: $0).lastPathComponent)…" : "Including \(URL(fileURLWithPath: $0).lastPathComponent) in Spotlight…" } ?? "Reading macOS exclusions…"
         queue.async {
-            let outcome = Result { try SpotlightPrivacyAutomation(cancelled: { self.isCancelled() }).run(path: path, excluded: excluded) }
+            let provider = self.exactList
+            let outcome = Result { try SpotlightPrivacyAutomation(cancelled: { self.isCancelled() }, exactList: provider).run(path: path, excluded: excluded) }
             DispatchQueue.main.async {
                 self.busy = false
                 switch outcome {
                 case .success(let value):
-                    self.snapshot = value; self.status = "Last checked at " + DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
+                    self.snapshot = value
+                    self.status = value == nil ? "Added in Search Privacy. Turn on Spotlight measurement to see exact exclusions."
+                        : "Last checked at " + DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
                     if !self.isCancelled(), NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" {
                         SpotlightExclusionWindow.shared.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
                     }
@@ -324,6 +502,7 @@ final class SpotlightExclusionControls: ObservableObject {
         let unrelatedRemoved = try SpotlightPrivacySnapshot(rows: [["/tmp/new"]])
         precondition(!unrelatedRemoved.matchesChange(from: value, path: "/tmp/new", excluded: true))
         let empty = try SpotlightPrivacySnapshot(rows: []); precondition(empty.paths.isEmpty)
+        precondition(SpotlightPrivacySnapshot.path("/tmp/U\u{0308}ni") == SpotlightPrivacySnapshot.path("/tmp/\u{00DC}ni"), "Decomposed and composed names are the same folder")
         for rows in [[["Caches"]], [["/tmp/a", "/tmp/b"]], [["https://example.com"]]] {
             do { _ = try SpotlightPrivacySnapshot(rows: rows); preconditionFailure("Unknown/ambiguous identities cannot mean unchecked") }
             catch is SpotlightPrivacyError { }
@@ -345,6 +524,7 @@ final class SpotlightExclusionWindow: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func show(model: Model) {
         if window?.isVisible != true { controls.invalidate() }
+        if !controls.usesTestList { controls.exactList = SpotlightExclusionControls.scannerList(model.folderAccess) }
         window?.contentView = NSHostingView(rootView: SpotlightExclusionEditor(model: model, controls: controls))
         if window?.isVisible != true { window?.center() }
         showWindow(nil); NSApp.activate(ignoringOtherApps: true)
@@ -382,7 +562,12 @@ struct SpotlightExclusionEditor: View {
                             if controls.snapshot != nil {
                                 Toggle(root.title, isOn: Binding(get: { covering != nil }, set: { controls.set(root.path, excluded: $0) }))
                                     .toggleStyle(.checkbox).disabled(controls.busy || ancestor != nil)
-                            } else { Label(root.title + " · Unknown", systemImage: "questionmark.square").foregroundStyle(Palette.secondary) }
+                            } else {
+                                HStack {
+                                    Label(root.title + " · Unknown", systemImage: "questionmark.square").foregroundStyle(Palette.secondary)
+                                    Button("Exclude") { controls.set(root.path, excluded: true) }.disabled(controls.busy || !controls.trusted)
+                                }
+                            }
                             Text(root.path).font(.caption).foregroundStyle(Palette.secondary).textSelection(.enabled)
                             if let ancestor { Text("Excluded through \(ancestor). Change the parent exclusion to include this folder.").font(.caption).foregroundStyle(Palette.secondary) }
                         }
@@ -397,7 +582,7 @@ struct SpotlightExclusionEditor: View {
                     controls.report("The Spotlight index cannot be added here."); return
                 }
                 model.addSpotlightSuggestions([url]); controls.set(url.path, excluded: true)
-            }.disabled(controls.busy || controls.snapshot == nil)
+            }.disabled(controls.busy || !controls.trusted)
         }.onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in controls.refreshPermission() }
         .padding(20).frame(minWidth: 440, minHeight: 360).foregroundStyle(Palette.primary).background(Palette.background)
     }
@@ -451,8 +636,26 @@ enum SpotlightExclusionHarness {
         func applicationDidFinishLaunching(_ notification: Notification) {
             let editor = SpotlightExclusionWindow.shared
             editor.controls.mutationScope = environment.root
+            editor.controls.usesTestList = true; editor.controls.exactList = SpotlightExclusionHarness.sudoList
             editor.show(model: environment.model)
             editor.window?.title = "Disk Monitor — Spotlight exclusions (test mode)"
+            if CommandLine.arguments.contains(closeFlag) {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let notes = SpotlightPrivacyAutomation(cancelled: stopped).closeLeftovers()
+                    FileManager.default.createFile(atPath: resultsURL.path, contents: Data(("CLOSE " + notes.joined(separator: "; ") + "\n").utf8), attributes: [.posixPermissions: 0o600])
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                }
+                return
+            }
+            if CommandLine.arguments.contains(dumpFlag) {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let lines: [String]
+                    do { lines = try SpotlightPrivacyAutomation(cancelled: stopped).dump() } catch { lines = ["FAIL dump: " + error.localizedDescription] }
+                    FileManager.default.createFile(atPath: dumpURL.path, contents: Data((lines.joined(separator: "\n") + "\n").utf8), attributes: [.posixPermissions: 0o600])
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                }
+                return
+            }
             guard CommandLine.arguments.contains(scenarioFlag) else { return }
             let root = environment.root
             DispatchQueue.global(qos: .userInitiated).async {
@@ -469,10 +672,30 @@ enum SpotlightExclusionHarness {
     // Headless live run: each step goes through the same verified automation as the
     // window. Only fixture paths are touched; any fixture left excluded is removed at the end.
     static let scenarioFlag = "--run-scenarios"
+    static let dumpFlag = "--dump-accessibility"
+    static let closeFlag = "--close-dialogs"
+    static var dumpURL: URL { FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-accessibility.txt") }
     static var resultsURL: URL { FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-results.log") }
     private static let stop = NSLock()
     private static var stopping = false
     private static func stopped() -> Bool { stop.lock(); defer { stop.unlock() }; return stopping }
+    // Test-only exact list: the same file the root scanner reads, via non-interactive sudo
+    // (the test VM's admin has it). The scanner's own reader is covered by its fixtures.
+    static func sudoList() throws -> SpotlightPrivacySnapshot {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        process.arguments = ["-n", "/bin/cat", "/System/Volumes/Data/.Spotlight-V100/VolumeConfiguration.plist"]
+        let output = Pipe(); process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        guard process.terminationStatus == 0, data.count <= 1 << 20,
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            throw SpotlightPrivacyError.unavailable("Test exclusion list could not be read (sudo -n).")
+        }
+        guard let value = plist["Exclusions"] else { return try SpotlightPrivacySnapshot(rows: []) }
+        guard let paths = value as? [String] else { throw SpotlightPrivacyError.unavailable("Unexpected exclusion list format.") }
+        return try SpotlightPrivacySnapshot(rows: paths.map { [$0] })
+    }
     static func runScenarios(root: String, log url: URL) {
         FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
         let handle = try? FileHandle(forWritingTo: url)
@@ -480,15 +703,18 @@ enum SpotlightExclusionHarness {
         func write(_ line: String) { handle?.write(Data((ISO8601DateFormatter().string(from: Date()) + " " + line + "\n").utf8)); print(line) }
         let info = ProcessInfo.processInfo.operatingSystemVersionString
         write("START macOS \(info) locale \(Locale.current.identifier) trusted=\(AXIsProcessTrusted()) root=\(root)")
-        func automation() -> SpotlightPrivacyAutomation { SpotlightPrivacyAutomation(cancelled: stopped) }
+        func automation() -> SpotlightPrivacyAutomation { SpotlightPrivacyAutomation(cancelled: stopped, exactList: sudoList) }
         func fixture(_ name: String) -> String { root + "/" + name }
         guard AXIsProcessTrusted() else {
-            do { _ = try automation().run(); write("FAIL denied: read succeeded without Accessibility") }
+            do { _ = try automation().run(path: fixture("folder with spaces"), excluded: true); write("FAIL denied: change attempted without Accessibility") }
             catch { write("PASS denied: \(error.localizedDescription)") }
             write("END denied-only"); return
         }
         var initial: SpotlightPrivacySnapshot
-        do { initial = try automation().run(); write("PASS read: \(initial.paths.count) existing exclusions") }
+        do {
+            guard let value = try automation().run() else { write("FAIL read: exact list unavailable"); write("END"); return }
+            initial = value; write("PASS read: \(initial.paths.count) existing exclusions")
+        }
         catch { write("FAIL read: \(error.localizedDescription)"); write("END"); return }
         guard initial.paths.allSatisfy({ !$0.hasPrefix(root + "/") }) else {
             write("FAIL precondition: fixtures already excluded; remove them first"); write("END"); return
@@ -497,14 +723,17 @@ enum SpotlightExclusionHarness {
         func step(_ name: String, _ path: String, excluded: Bool, blocked: Bool = false, check: (SpotlightPrivacySnapshot) -> Bool = { _ in true }) {
             guard failures == 0, !stopped() else { return }
             guard path.hasPrefix(root + "/") else { failures += 1; write("FAIL \(name): outside fixtures"); return }
+            let operation = automation()
             do {
-                let value = try automation().run(path: path, excluded: excluded)
+                guard let value = try operation.run(path: path, excluded: excluded) else { failures += 1; write("FAIL " + name + ": exact list unavailable"); return }
                 let ok = !blocked && (value.covering(path) != nil) == excluded && check(value)
                 write((ok ? "PASS " : "FAIL ") + name + ": \(value.paths.subtracting(initial.paths).sorted())")
                 if !ok { failures += 1 }; current = value
             } catch {
-                write((blocked ? "PASS " : "FAIL ") + name + ": " + error.localizedDescription)
+                write((blocked ? "PASS " : "FAIL ") + name + ": " + error.localizedDescription
+                      + (operation.cleanupNotes.isEmpty ? "" : " [cleanup: " + operation.cleanupNotes.joined(separator: "; ") + "]"))
                 if !blocked { failures += 1 }
+                if !operation.failureTree.isEmpty { write("CHOOSER TREE AT FAILURE:\n" + operation.failureTree.joined(separator: "\n")) }
             }
         }
         let spaces = fixture("folder with spaces"), a = fixture("duplicate-a/Cache"), b = fixture("duplicate-b/Cache")
@@ -522,9 +751,9 @@ enum SpotlightExclusionHarness {
         step("remove spaces", spaces, excluded: false)
         // Restore: remove only fixture entries that are still excluded, whatever failed above.
         do {
-            var final = try automation().run()
+            guard var final = try automation().run() else { throw SpotlightPrivacyError.unavailable("exact list unavailable") }
             for path in final.paths.filter({ $0.hasPrefix(root + "/") }).sorted(by: { $0.count > $1.count }) where !stopped() {
-                do { final = try automation().run(path: path, excluded: false); write("CLEANUP removed \(path)") }
+                do { final = try automation().run(path: path, excluded: false) ?? final; write("CLEANUP removed \(path)") }
                 catch { write("CLEANUP FAILED \(path): \(error.localizedDescription)") }
             }
             let restored = final.paths == initial.paths
@@ -541,8 +770,13 @@ enum SpotlightExclusionHarness {
         print("Spotlight exclusion test mode. Fixtures: \(environment.root)")
         let delegate = Delegate(environment)
         app.delegate = delegate
+        // `kill -TERM <pid>` quits through the delegate so isolated state is cleaned up.
+        signal(SIGTERM, SIG_IGN)
+        let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        termination.setEventHandler { NSApp.terminate(nil) }
+        termination.resume()
         app.setActivationPolicy(.regular)
-        withExtendedLifetime(delegate) { app.run() }
+        withExtendedLifetime((delegate, termination)) { app.run() }
         exit(0)
     }
     static func selfTest() throws {

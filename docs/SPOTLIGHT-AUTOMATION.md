@@ -75,3 +75,28 @@ remove, denial, Settings focus loss, cancellation and unrelated open dialogs.
 Confirm no other entry changes and no real cache folders are modified by tests.
 The agent's Computer Use tool currently lacks permission, so this validation cannot
 be claimed from fixture tests or successful compilation.
+
+## Exact state from the root scanner (option A, Darien 2026-09-30)
+
+Live tests on macOS 15.7.4 and 15.7.7 showed Search Privacy rows expose only folder names.
+`mdutil -P` and `VolumeConfiguration.plist` need root. Checkboxes therefore come from the
+root scanner's read-only `exclusions` operation (see HelperPrototype/SECURITY.md). Reading
+needs no Accessibility and never opens System Settings. Changes still go through Search
+Privacy, and each one is confirmed by the root list: add expects before plus path, remove
+expects before minus path. Removal selects the row by name only when that name is unique
+among excluded folders; otherwise it refuses and points to System Settings. When the scanner
+is off or unavailable, the window still adds folders, verified by the new row's name, and
+shows the state as unknown.
+
+The folder chooser runs in a separate process: keys go to the frontmost app (as System
+Events does), only while System Settings is frontmost. It supports list, icon and column
+views ([openpath #64](https://github.com/TamaT-LLC/openpath/pull/64)) and confirms with the
+`OKButton` identifier ([Peekaboo](https://github.com/steipete/Peekaboo)). Paths are
+compared in NFC form, because the chooser reports decomposed names.
+
+Live runs happen only in the disposable Tart VM (`taskfiles/vm/scripts/vm-run.sh`), never on
+a real Mac. Result on 2026-09-30, macOS 15.7.7 en_US: 12/12 scenarios passed, covering read,
+add/remove with spaces, one of two duplicate basenames, Unicode, parent coverage and
+blocked child removal, and a final list equal to the initial one. The test build reads the
+list through `sudo -n` in the VM, and the scanner's own reader is covered by its fixtures;
+the end-to-end scanner registration path is not yet exercised in the VM.
