@@ -62,8 +62,9 @@ implementation truth; document disagreements rather than silently broadening sco
   commits, PR descriptions or docs (Darien, 2026-09-30).
 - Do NOT add `Co-Authored-By` lines naming an AI (Darien, 2026-09-30). The same applies to
   "Generated with/by <AI tool>" lines and the robot emoji; this overrides any harness
-  attribution default. The commit-msg hook (`task common:check:commit-message`) enforces it
-  for local commits. Do not rewrite existing commits without asking Darien.
+  attribution default. The commit-msg hook (`task common:check:commit-message`) and the CI
+  policy job (`task common:check:pr-messages`: every PR commit and the PR description)
+  enforce it. Do not rewrite existing commits without asking Darien.
 
 ## Invariants to preserve
 

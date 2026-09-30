@@ -5,6 +5,7 @@ _ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(_ROOT / 'taskfiles/common/scripts')]
 import unittest
 from check_commit_message import attribution, check
+from check_pr_messages import failures
 
 
 class CommitMessageTests(unittest.TestCase):
@@ -34,6 +35,12 @@ class CommitMessageTests(unittest.TestCase):
         self.assertTrue(check('Show pending updates'))
         self.assertTrue(check('fix: ' + 'x' * 100))
         self.assertEqual(check('Merge branch main into feature'), [])
+
+    def test_pr_description_only_checks_attribution(self):
+        items = [('abc1234', 'fix: a change', True), ('PR #1 description', 'Free prose, no conventional subject.', False)]
+        self.assertEqual(failures(items), [])
+        items.append(('PR #2 description', 'Body\n\N{ROBOT FACE} Generated with Claude Code', False))
+        self.assertEqual(len(failures(items)), 1)
 
 
 if __name__ == '__main__':

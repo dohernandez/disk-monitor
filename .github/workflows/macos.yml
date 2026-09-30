@@ -36,6 +36,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: task common:check:commit-signatures -- --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --pr "$PR_NUMBER"
+      - name: Reject AI attribution in commit messages and PR description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: task common:check:pr-messages -- --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --pr "$PR_NUMBER"
 
   build:
     name: Test and build (${{ matrix.arch }})

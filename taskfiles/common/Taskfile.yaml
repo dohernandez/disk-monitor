@@ -67,6 +67,17 @@ tasks:
       - python3 ./taskfiles/common/scripts/check_commit_message.py {{.CLI_ARGS}}
     dir: "{{.ROOT_DIR}}"
 
+  check:pr-messages:
+    desc: Check every new commit message and the PR description for AI attribution (CI policy job; needs gh and GH_TOKEN)
+    summary: |
+      API-made commits skip local git hooks, so CI repeats the commit-msg check.
+
+      Usage:
+        task common:check:pr-messages -- --repo dohernandez/disk-monitor --sha <sha> --pr <number>
+    cmds:
+      - python3 ./taskfiles/common/scripts/check_pr_messages.py {{.CLI_ARGS}}
+    dir: "{{.ROOT_DIR}}"
+
   check:commit-signatures:
     desc: Require GitHub-verified signatures on every new commit (CI policy job; needs gh and GH_TOKEN)
     summary: |
