@@ -81,6 +81,14 @@ enum SpotlightExclusionHarness {
                 }
                 return
             }
+            if CommandLine.arguments.contains(probeFlag) {
+                let root = environment.root
+                DispatchQueue.global(qos: .userInitiated).async {
+                    runProbe(root: root, log: resultsURL)
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                }
+                return
+            }
             guard CommandLine.arguments.contains(scenarioFlag) else { return }
             let root = environment.root
             DispatchQueue.global(qos: .userInitiated).async {
@@ -99,6 +107,190 @@ enum SpotlightExclusionHarness {
     static let scenarioFlag = "--run-scenarios"
     static let dumpFlag = "--dump-accessibility"
     static let closeFlag = "--close-dialogs"
+    // Experiment: which presentations apply a change without showing System Settings.
+    static let probeFlag = "--background-probe"
+    // `--presentation foreground|background|hidden|brief` for --run-scenarios (default: brief, as in the app).
+    static let presentationFlag = "--presentation"
+    static var presentation: SpotlightPrivacyAutomation.Presentation {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: presentationFlag), index + 1 < arguments.count,
+              let value = SpotlightPrivacyAutomation.Presentation(rawValue: arguments[index + 1]) else { return .brief }
+        return value
+    }
+    static let settingsID = "com.apple.systempreferences"
+    // Samples, every 30 ms, whether System Settings is the active app and whether one of its
+    // windows (or the folder chooser service's) is on screen and inside a display.
+    final class Visibility {
+        private let lock = NSLock()
+        private var running = true
+        private(set) var frontmost = 0.0, listed = 0.0, visible = 0.0, area = 0.0
+        private var owners = Set<String>()
+        static func sample() -> (frontmost: Bool, listed: Bool, visible: Bool, owners: [String], area: Double) {
+            let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == settingsID
+            let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+            let mine = all.filter { window in
+                let owner = window[kCGWindowOwnerName as String] as? String ?? ""
+                return (window[kCGWindowLayer as String] as? Int) == 0 && (owner == "System Settings" || owner.contains("Open and Save Panel"))
+            }
+            var count: UInt32 = 0
+            CGGetActiveDisplayList(0, nil, &count)
+            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            CGGetActiveDisplayList(count, &displays, &count)
+            let screens = displays.map { CGDisplayBounds($0) }
+            var area = 0.0
+            for window in mine {
+                guard let bounds = window[kCGWindowBounds as String] as? NSDictionary, let rect = CGRect(dictionaryRepresentation: bounds),
+                      (window[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
+                for screen in screens { let shared = screen.intersection(rect); if !shared.isNull { area = max(area, Double(shared.width * shared.height)) } }
+            }
+            return (front, !mine.isEmpty, area > 0, mine.compactMap { $0[kCGWindowOwnerName as String] as? String }, area)
+        }
+        func start() {
+            Thread.detachNewThread {
+                var last = Date()
+                while true {
+                    Thread.sleep(forTimeInterval: 0.03)
+                    self.lock.lock(); let active = self.running; self.lock.unlock()
+                    guard active else { return }
+                    let now = Date(), elapsed = now.timeIntervalSince(last); last = now
+                    let state = Visibility.sample()
+                    self.lock.lock()
+                    if state.frontmost { self.frontmost += elapsed }
+                    if state.listed { self.listed += elapsed }
+                    if state.visible { self.visible += elapsed }
+                    self.area = max(self.area, state.area)
+                    self.owners.formUnion(state.owners)
+                    self.lock.unlock()
+                }
+            }
+        }
+        func stop() -> String {
+            lock.lock(); running = false; defer { lock.unlock() }
+            return String(format: "settingsFrontmost=%.2fs windowListed=%.2fs windowVisible=%.2fs maxVisibleArea=%.0fpx2 owners=%@", frontmost, listed, visible, area, owners.sorted().description)
+        }
+    }
+    static func settingsApp() -> NSRunningApplication? { NSRunningApplication.runningApplications(withBundleIdentifier: settingsID).first }
+    static func quitSettings() {
+        guard let app = settingsApp() else { return }
+        app.terminate()
+        for _ in 0..<50 where !app.isTerminated { Thread.sleep(forTimeInterval: 0.1) }
+        if !app.isTerminated { app.forceTerminate(); Thread.sleep(forTimeInterval: 0.5) }
+    }
+    static func runProbe(root: String, log url: URL) {
+        FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        let handle = try? FileHandle(forWritingTo: url)
+        defer { try? handle?.close() }
+        func write(_ line: String) { handle?.write(Data((ISO8601DateFormatter().string(from: Date()) + " " + line + "\n").utf8)); print(line) }
+        write("START probe macOS \(ProcessInfo.processInfo.operatingSystemVersionString) trusted=\(AXIsProcessTrusted()) root=\(root)")
+        guard AXIsProcessTrusted() else { write("END not trusted"); return }
+        typealias Mode = SpotlightPrivacyAutomation.Presentation
+        func automation(_ mode: Mode, walk: Bool = false) -> SpotlightPrivacyAutomation {
+            let value = SpotlightPrivacyAutomation(cancelled: stopped, exactList: sudoList)
+            value.presentation = mode; value.walksChooser = walk
+            return value
+        }
+        func front() -> String { NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none" }
+        func state() -> String {
+            Thread.sleep(forTimeInterval: 1.0)
+            let app = settingsApp()
+            return "frontAfter=\(front()) settingsRunning=\(app != nil) settingsHidden=\(app?.isHidden ?? false)"
+        }
+        // One measured operation. `expect` is the exclusion state the exact list must show afterwards.
+        // Like the app in use: Disk Monitor is the active app when a change starts.
+        func activateSelf() {
+            _ = DispatchQueue.main.sync { NSApp.activate(ignoringOtherApps: true) }
+            for _ in 0..<30 where front() != Bundle.main.bundleIdentifier { Thread.sleep(forTimeInterval: 0.1) }
+        }
+        func measure(_ name: String, _ operation: SpotlightPrivacyAutomation, path: String, excluded: Bool) {
+            activateSelf()
+            let before = front()
+            let sampler = Visibility(); sampler.start()
+            var outcome: String
+            do {
+                let value = try operation.run(path: path, excluded: excluded)
+                let ok = value.map { ($0.covering(path) != nil) == excluded } ?? false
+                outcome = ok ? "WORKS" : "WRONG-RESULT"
+            } catch { outcome = "FAILS: " + error.localizedDescription }
+            let seen = sampler.stop()
+            let listed = ((try? sudoList())?.covering(path) != nil)
+            write("PROBE \(name): \(outcome); exactListExcluded=\(listed); \(seen); frontBefore=\(before) \(state())"
+                  + " notes=\(operation.presentationNotes) cleanup=\(operation.cleanupNotes)")
+        }
+        // Known-good setup and cleanup use the visible foreground flow, outside any measurement.
+        func ensure(_ path: String, excluded: Bool) {
+            guard ((try? sudoList())?.covering(path) != nil) != excluded else { return }
+            do { _ = try automation(.foreground).run(path: path, excluded: excluded) }
+            catch { write("SETUP \(excluded ? "add" : "remove") failed for \(path): \(error.localizedDescription)") }
+            quitSettings()
+        }
+        let spaces = root + "/folder with spaces"
+        let visibleRoot = NSHomeDirectory() + "/DiskMonitorProbe"
+        let visibleTarget = visibleRoot + "/visible target"
+        try? FileManager.default.createDirectory(atPath: visibleTarget, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: visibleRoot) }
+        quitSettings()
+
+        // 1. Is the pane reachable without activating / while hidden?
+        for mode in [Mode.background, .hidden] {
+            let before = front(); let sampler = Visibility(); sampler.start()
+            let operation = automation(mode)
+            let result = (try? operation.probeReach()) ?? "error opening"
+            write("PROBE reach-\(mode.rawValue): \(result); \(sampler.stop()); frontBefore=\(before) \(state()) notes=\(operation.presentationNotes)")
+            quitSettings()
+        }
+        // 2. Remove entirely without activating / while hidden.
+        for mode in [Mode.background, .hidden] {
+            ensure(spaces, excluded: true)
+            measure("remove-\(mode.rawValue)", automation(mode), path: spaces, excluded: false)
+            quitSettings()
+        }
+        // 3a. Add entirely without activating / while hidden (Go to Folder keys to the Settings pid).
+        for mode in [Mode.background, .hidden] {
+            ensure(spaces, excluded: false)
+            measure("add-a-\(mode.rawValue)", automation(mode), path: spaces, excluded: true)
+            quitSettings()
+        }
+        // 3b. Add with Accessibility navigation only: a visible folder, then a hidden one.
+        ensure(spaces, excluded: false)
+        measure("add-b-walk-visible-hidden", automation(.hidden, walk: true), path: visibleTarget, excluded: true)
+        quitSettings()
+        measure("add-b-walk-visible-background", automation(.background, walk: true), path: visibleTarget, excluded: true)
+        quitSettings()
+        ensure(visibleTarget, excluded: false)
+        measure("add-b-walk-hiddenfolder-background", automation(.background, walk: true), path: spaces, excluded: true)
+        quitSettings()
+        // 3c. Activate only for the Go to Folder keystrokes.
+        for mode in [Mode.brief] {
+            ensure(spaces, excluded: false)
+            measure("add-c-\(mode.rawValue)", automation(mode), path: spaces, excluded: true)
+            quitSettings()
+            ensure(spaces, excluded: true)
+            measure("remove-\(mode.rawValue)", automation(mode), path: spaces, excluded: false)
+            quitSettings()
+        }
+        // 4. System Settings already open on another pane and not active: is it left as it was?
+        for mode in [Mode.brief] {
+            ensure(spaces, excluded: false)
+            _ = DispatchQueue.main.sync { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Displays-Settings.extension")!) }
+            Thread.sleep(forTimeInterval: 3)
+            _ = DispatchQueue.main.sync { NSApp.activate(ignoringOtherApps: true) }
+            Thread.sleep(forTimeInterval: 1.5)
+            measure("add-c-\(mode.rawValue)-settings-already-open", automation(mode), path: spaces, excluded: true)
+            quitSettings()
+            ensure(spaces, excluded: true)
+            _ = DispatchQueue.main.sync { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Displays-Settings.extension")!) }
+            Thread.sleep(forTimeInterval: 3)
+            measure("remove-\(mode.rawValue)-settings-already-open", automation(mode), path: spaces, excluded: false)
+            let after = settingsApp()
+            write("PROBE state-after-\(mode.rawValue)-settings-already-open: running=\(after != nil) hidden=\(after?.isHidden ?? false)")
+            quitSettings()
+        }
+        // Leave no fixture or probe folder excluded.
+        for path in [spaces, visibleTarget] { ensure(path, excluded: false) }
+        let leftover = ((try? sudoList())?.paths ?? []).filter { $0.hasPrefix(root + "/") || $0.hasPrefix(visibleRoot) }
+        write((leftover.isEmpty ? "PASS" : "FAIL") + " no probe exclusions left: \(leftover.sorted())")
+        write("END probe")
+    }
     static var dumpURL: URL { FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-accessibility.txt") }
     static var resultsURL: URL { FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-results.log") }
     private static let stop = NSLock()
@@ -127,8 +319,13 @@ enum SpotlightExclusionHarness {
         defer { try? handle?.close() }
         func write(_ line: String) { handle?.write(Data((ISO8601DateFormatter().string(from: Date()) + " " + line + "\n").utf8)); print(line) }
         let info = ProcessInfo.processInfo.operatingSystemVersionString
-        write("START macOS \(info) locale \(Locale.current.identifier) trusted=\(AXIsProcessTrusted()) root=\(root)")
-        func automation() -> SpotlightPrivacyAutomation { SpotlightPrivacyAutomation(cancelled: stopped, exactList: sudoList) }
+        let mode = presentation
+        write("START macOS \(info) locale \(Locale.current.identifier) trusted=\(AXIsProcessTrusted()) presentation=\(mode.rawValue) root=\(root)")
+        func automation() -> SpotlightPrivacyAutomation {
+            let value = SpotlightPrivacyAutomation(cancelled: stopped, exactList: sudoList)
+            value.presentation = mode
+            return value
+        }
         func fixture(_ name: String) -> String { root + "/" + name }
         guard AXIsProcessTrusted() else {
             do { _ = try automation().run(path: fixture("folder with spaces"), excluded: true); write("FAIL denied: change attempted without Accessibility") }
@@ -152,7 +349,7 @@ enum SpotlightExclusionHarness {
             do {
                 guard let value = try operation.run(path: path, excluded: excluded) else { failures += 1; write("FAIL " + name + ": exact list unavailable"); return }
                 let ok = !blocked && (value.covering(path) != nil) == excluded && check(value)
-                write((ok ? "PASS " : "FAIL ") + name + ": \(value.paths.subtracting(initial.paths).sorted())")
+                write((ok ? "PASS " : "FAIL ") + name + ": \(value.paths.subtracting(initial.paths).sorted()) \(operation.presentationNotes)")
                 if !ok { failures += 1 }; current = value
             } catch {
                 write((blocked ? "PASS " : "FAIL ") + name + ": " + error.localizedDescription

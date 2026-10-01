@@ -58,6 +58,21 @@ final class SpotlightPrivacyAutomation {
     init(cancelled: @escaping () -> Bool = { false }, exactList: (() throws -> SpotlightPrivacySnapshot)? = nil) {
         self.cancelled = cancelled; self.exactList = exactList
     }
+    // How System Settings is presented while a change is applied.
+    // foreground: opened and activated for the whole change. brief: opened without activating;
+    // activated only while the folder chooser needs keystrokes, then focus goes back, and
+    // System Settings is left as it was (quit if this change launched it).
+    // background and hidden never activate; they exist to record what macOS does not allow
+    // (docs/SPOTLIGHT-AUTOMATION.md): no keystrokes reach the chooser, and a hidden app
+    // does not present the Search Privacy sheet.
+    enum Presentation: String { case foreground, background, hidden, brief }
+    var presentation: Presentation = .brief
+    private var focusedAt: Date?
+    private var previous: NSRunningApplication?
+    private var launched = false
+    private var hiddenBefore = false
+    private var focused = false
+    private(set) var presentationNotes: [String] = []
     private func fail(_ message: String) -> SpotlightPrivacyError { .unavailable(message) }
     private func check() throws {
         if cancelled() { throw fail("Operation stopped. Refresh to check the current macOS exclusions.") }
@@ -95,6 +110,8 @@ final class SpotlightPrivacyAutomation {
     }
     private func foreground() throws {
         try check()
+        // Accessibility actions do not need System Settings in front; only keystrokes do.
+        if presentation != .foreground && !focused { return }
         guard let process, NSWorkspace.shared.frontmostApplication?.processIdentifier == process.processIdentifier else {
             throw fail("System Settings lost focus. Refresh to check the current exclusions before retrying.")
         }
@@ -107,11 +124,107 @@ final class SpotlightPrivacyAutomation {
     // Settings' pid never reach it. Like System Events, post to the frontmost app, and
     // only after confirming System Settings is frontmost.
     private func key(_ code: CGKeyCode, flags: CGEventFlags = []) throws {
+        if presentation == .brief { try focus() }
         try foreground()
         guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else { throw fail("Could not send the folder-selection command.") }
         down.flags = flags; up.flags = flags
+        if presentation == .background || presentation == .hidden {
+            // Never activated: the only place to send keys is the Settings process itself.
+            guard let process else { throw fail("Could not send the folder-selection command.") }
+            down.postToPid(process.processIdentifier); up.postToPid(process.processIdentifier)
+            return
+        }
         down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+    }
+    // Keystrokes reach the folder chooser only while System Settings is the active app.
+    private func focus() throws {
+        guard !focused, let process, let application else { return }
+        let started = Date()
+        // Accessibility activation plus the AppKit request: either alone was not always enough
+        // when System Settings was already running in the background.
+        AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        _ = DispatchQueue.main.sync { process.activate() }
+        _ = try wait("System Settings to accept the folder path", timeout: 5) {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == process.processIdentifier
+                && (self.attribute(application, kAXFrontmostAttribute) as? Bool) == true ? true : nil
+        }
+        if let window = windows().first {
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+        }
+        Thread.sleep(forTimeInterval: 0.4)
+        focused = true; focusedAt = Date()
+        presentationNotes.append(String(format: "activated in %.2fs", Date().timeIntervalSince(started)))
+    }
+    private func focusState() -> String {
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"
+        var role = "none"
+        if let application, let element = attribute(application, kAXFocusedUIElementAttribute), CFGetTypeID(element) == AXUIElementGetTypeID() {
+            let node = unsafeBitCast(element, to: AXUIElement.self)
+            role = string(node, kAXRoleAttribute) + "/" + string(node, kAXSubroleAttribute) + "/" + string(node, kAXIdentifierAttribute)
+        }
+        return "frontmost=\(front) focusedElement=\(role)"
+    }
+    private func unfocus() {
+        guard focused else { return }
+        focused = false
+        guard let previous, !previous.isTerminated, let process else { return }
+        DispatchQueue.main.sync {
+            if previous.processIdentifier == ProcessInfo.processInfo.processIdentifier { NSApp.activate(ignoringOtherApps: true) }
+            else { _ = previous.activate() }
+        }
+        let asked = Date()
+        while NSWorkspace.shared.frontmostApplication?.processIdentifier == process.processIdentifier, Date().timeIntervalSince(asked) < 3 {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        let back = NSWorkspace.shared.frontmostApplication?.processIdentifier != process.processIdentifier
+        presentationNotes.append(String(format: "focus %@ after %.2fs active", back ? "returned" : "NOT returned", Date().timeIntervalSince(focusedAt ?? asked)))
+    }
+    private func position(_ window: AXUIElement) -> CGPoint? {
+        guard let value = attribute(window, kAXPositionAttribute), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero
+        return AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cgPoint, &point) ? point : nil
+    }
+    private func openPane() throws {
+        let url = URL(string: "x-apple.systempreferences:com.apple.Spotlight-Settings.extension")!
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first { !$0.isTerminated }
+        launched = running == nil; hiddenBefore = running?.isHidden ?? false
+        previous = NSWorkspace.shared.frontmostApplication
+        if presentation == .foreground {
+            guard DispatchQueue.main.sync(execute: { NSWorkspace.shared.open(url) }) else { throw fail("Could not open Spotlight settings.") }
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.hides = presentation == .hidden
+        // A System Settings that is still quitting (for example after the previous change)
+        // refuses the request; retry briefly.
+        var opened = false
+        for attempt in 0..<4 where !opened {
+            try check()
+            if attempt > 0 { Thread.sleep(forTimeInterval: 0.7) }
+            let done = DispatchSemaphore(value: 0)
+            var failure: Error?
+            NSWorkspace.shared.open(url, configuration: configuration) { _, error in failure = error; done.signal() }
+            opened = done.wait(timeout: .now() + 10) == .success && failure == nil
+        }
+        guard opened else { throw fail("Could not open Spotlight settings.") }
+    }
+    // Leave System Settings as it was: quit it if this operation launched it, otherwise hide
+    // it again if it was hidden. It stays on the Spotlight pane. No-op for the foreground mode.
+    private func restore() {
+        guard presentation != .foreground, let process else { return }
+        unfocus()
+        if launched {
+            process.terminate()
+            // Let it finish quitting so a following change starts from a clean state.
+            let asked = Date()
+            while !process.isTerminated, Date().timeIntervalSince(asked) < 4 { Thread.sleep(forTimeInterval: 0.05) }
+            presentationNotes.append("quit System Settings (launched for this change)")
+            return
+        }
+        if hiddenBefore { process.hide() } else if presentation == .hidden { process.unhide() }
     }
     private func url(_ element: AXUIElement) -> String? {
         (attribute(element, kAXURLAttribute) as? URL).flatMap { $0.isFileURL ? SpotlightPrivacySnapshot.path($0.path) : nil }
@@ -122,12 +235,9 @@ final class SpotlightPrivacyAutomation {
     private func windows() -> [AXUIElement] { application.map { elements($0, kAXWindowsAttribute) } ?? [] }
     private func privacySheet() throws -> AXUIElement {
         guard AXIsProcessTrusted() else { throw fail("Allow Disk Monitor in System Settings → Privacy & Security → Accessibility, then retry.") }
-        let opened = DispatchQueue.main.sync {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Spotlight-Settings.extension")!)
-        }
-        guard opened else { throw fail("Could not open Spotlight settings.") }
+        try openPane()
         process = try wait("System Settings") {
-            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first { !$0.isTerminated }
         }
         application = AXUIElementCreateApplication(process!.processIdentifier)
         AXUIElementSetMessagingTimeout(application!, 2)
@@ -205,6 +315,8 @@ final class SpotlightPrivacyAutomation {
     #if DISK_MONITOR_TESTS
     // Test build diagnostic: the chooser's accessibility tree when finding the folder failed.
     private(set) var failureTree: [String] = []
+    // Test build experiment: reach the folder with Accessibility actions only, no keystrokes.
+    var walksChooser = false
     #endif
     private func closeOpened() {
         guard openedSheet else { return }
@@ -243,6 +355,7 @@ final class SpotlightPrivacyAutomation {
     }
     #endif
     func run(path: String? = nil, excluded: Bool = false) throws -> SpotlightPrivacySnapshot? {
+        defer { restore() }
         do { return try operate(path: path, excluded: excluded) }
         catch { closeOpened(); throw error }
     }
@@ -319,19 +432,36 @@ final class SpotlightPrivacyAutomation {
         // Go to the parent, then select the exact folder row. Choosing the chooser's
         // current directory is never accepted as proof of selection.
         let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
-        try key(5, flags: [.maskCommand, .maskShift])
-        let field: AXUIElement = try wait("Go to Folder") {
-            let fields = try self.descendants(picker).filter {
-                [kAXTextFieldRole, kAXComboBoxRole].contains(self.string($0, kAXRoleAttribute))
-                    && self.string($0, kAXSubroleAttribute) != kAXSearchFieldSubrole
-                    && (self.attribute($0, kAXFocusedAttribute) as? Bool) == true
-            }
-            return fields.count == 1 ? fields[0] : nil
+        var walked = false
+        #if DISK_MONITOR_TESTS
+        if walksChooser { try walk(to: path, in: picker); walked = true }
+        #endif
+        if !walked {
+            try key(5, flags: [.maskCommand, .maskShift])
+            let field: AXUIElement
+            do { field = try wait("Go to Folder") {
+                // Fast path: Go to Folder focuses its own text field. Scanning the whole chooser
+                // takes seconds, and System Settings stays the active app meanwhile.
+                if let app = self.application, let focus = self.attribute(app, kAXFocusedUIElementAttribute), CFGetTypeID(focus) == AXUIElementGetTypeID() {
+                    let node = unsafeBitCast(focus, to: AXUIElement.self)
+                    if [kAXTextFieldRole, kAXComboBoxRole].contains(self.string(node, kAXRoleAttribute)),
+                       self.string(node, kAXSubroleAttribute) != kAXSearchFieldSubrole, self.url(node) == nil { return node }
+                }
+                let fields = try self.descendants(picker).filter {
+                    [kAXTextFieldRole, kAXComboBoxRole].contains(self.string($0, kAXRoleAttribute))
+                        && self.string($0, kAXSubroleAttribute) != kAXSearchFieldSubrole
+                        && (self.attribute($0, kAXFocusedAttribute) as? Bool) == true
+                }
+                return fields.count == 1 ? fields[0] : nil
+            } } catch { presentationNotes.append("at Go to Folder timeout: " + focusState()); throw error }
+            try foreground()
+            guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, parent as CFString) == .success,
+                  string(field, kAXValueAttribute) == parent else { throw fail("Could not enter the folder path. No exclusion was added.") }
+            try key(36)
+            // The chooser navigates without needing focus; give the key time to arrive, then hand focus back.
+            Thread.sleep(forTimeInterval: 0.3)
+            unfocus()
         }
-        try foreground()
-        guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, parent as CFString) == .success,
-              string(field, kAXValueAttribute) == parent else { throw fail("Could not enter the folder path. No exclusion was added.") }
-        try key(36)
         // List view exposes rows (AXRow). Icon view (AXCollectionList, github.com/TamaT-LLC/openpath/pull/64)
         // and column view (AXBrowser columns) expose plain AXLists of groups holding the AXURL item.
         // Select the exact item; the selection's identity is verified before Choose.
@@ -355,6 +485,8 @@ final class SpotlightPrivacyAutomation {
             #endif
             throw error
         }
+        // Keystrokes are done; selecting and choosing are Accessibility actions.
+        unfocus()
         try foreground()
         guard AXUIElementSetAttributeValue(item.container, item.attribute as CFString, [item.element] as CFArray) == .success else {
             throw fail("macOS could not select the folder. No exclusion was added.")
@@ -391,6 +523,68 @@ extension SpotlightPrivacyAutomation {
         guard lines.count < 3000, depth < 40 else { return }
         lines.append(String(repeating: "  ", count: depth) + describe(root))
         for child in elements(root) { try tree(child, into: &lines, depth: depth + 1) }
+    }
+    // Experiment: can the pane be opened and its Search Privacy button found in this presentation?
+    func probeReach() throws -> String {
+        defer { restore() }
+        try openPane()
+        process = try wait("System Settings") { NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first }
+        application = AXUIElementCreateApplication(process!.processIdentifier)
+        AXUIElementSetMessagingTimeout(application!, 2)
+        guard let window = try? wait("Spotlight settings", timeout: 6, { self.windows().first }) else {
+            return "no accessibility window (app hidden=\(process!.isHidden))"
+        }
+        let buttons: Int = (try? wait("Search Privacy", timeout: 6) { () -> Int? in
+            let found = try self.descendants(window).filter { node in
+                self.string(node, kAXRoleAttribute) == kAXButtonRole && ["Search Privacy…", "Search Privacy"].contains(self.string(node, kAXDescriptionAttribute))
+            }
+            return found.isEmpty ? nil : found.count
+        }) ?? 0
+        return "window=\(string(window, kAXTitleAttribute).debugDescription) searchPrivacyButtons=\(buttons) hidden=\(process!.isHidden) position=\(position(window).map { "\(Int($0.x)),\(Int($0.y))" } ?? "?")"
+    }
+    // Experiment: enter folders with AXOpen instead of Go to Folder. Hidden folders are not
+    // listed by the chooser, so this cannot reach them.
+    func walk(to path: String, in picker: AXUIElement) throws {
+        var last: String?
+        for _ in 0..<16 {
+            let nodes = try descendants(picker)
+            if nodes.filter({ url($0) == path }).count == 1 { presentationNotes.append("walk reached the folder"); return }
+            let ancestors = nodes.compactMap { node -> (AXUIElement, String)? in
+                guard let item = url(node), item != path, path.hasPrefix(item == "/" ? "/" : item + "/") else { return nil }
+                return (node, item)
+            }
+            if let best = ancestors.max(by: { $0.1.count < $1.1.count }), best.1 != last {
+                if AXUIElementPerformAction(best.0, "AXOpen" as CFString) == .success {
+                    presentationNotes.append("walk AXOpen \(best.1)")
+                } else {
+                    // Column view drills into a folder when it is selected.
+                    var node = best.0, selected = false
+                    for _ in 0..<8 {
+                        guard let parent = attribute(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+                        let container = unsafeBitCast(parent, to: AXUIElement.self)
+                        let name = string(node, kAXRoleAttribute) == kAXRowRole ? kAXSelectedRowsAttribute : string(container, kAXRoleAttribute) == kAXListRole ? kAXSelectedChildrenAttribute : nil
+                        if let name { selected = AXUIElementSetAttributeValue(container, name as CFString, [node] as CFArray) == .success; break }
+                        node = container
+                    }
+                    guard selected else { throw fail("walk: AXOpen and selection both failed at \(best.1)") }
+                    presentationNotes.append("walk selected \(best.1) (AXOpen refused)")
+                }
+                last = best.1; Thread.sleep(forTimeInterval: 0.8); continue
+            }
+            if last == nil {
+                let home = NSHomeDirectory()
+                let label = path.hasPrefix(home + "/") ? URL(fileURLWithPath: home).lastPathComponent : FileManager.default.displayName(atPath: "/")
+                let cells = nodes.filter { cell in
+                    string(cell, kAXRoleAttribute) == kAXCellRole && elements(cell).contains { string($0, kAXRoleAttribute) == kAXStaticTextRole && string($0, kAXValueAttribute) == label }
+                }
+                guard cells.count == 1, AXUIElementPerformAction(cells[0], "AXOpen" as CFString) == .success else {
+                    throw fail("walk: no sidebar entry “\(label)” (found \(cells.count))")
+                }
+                last = "sidebar:" + label; presentationNotes.append("walk opened sidebar \(label)"); Thread.sleep(forTimeInterval: 0.8); continue
+            }
+            throw fail("walk: the next folder toward \(path) is not listed in the chooser after \(last ?? "start") (hidden folder?)")
+        }
+        throw fail("walk: gave up")
     }
     func dump() throws -> [String] {
         guard AXIsProcessTrusted() else { throw fail("Not trusted for Accessibility.") }
@@ -510,7 +704,8 @@ final class SpotlightExclusionControls: ObservableObject {
                     self.snapshot = value
                     self.status = value == nil ? "Added in Search Privacy. Turn on Spotlight measurement to see exact exclusions."
                         : "Last checked at " + DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
-                    if path != nil, !self.isCancelled(), NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" {
+                    // Adding needs System Settings active for a few seconds, which closes the popover.
+                    if path != nil, !self.isCancelled() {
                         NSApp.activate(ignoringOtherApps: true)
                         NotificationCenter.default.post(name: .diskMonitorReopenPopover, object: nil)
                     }

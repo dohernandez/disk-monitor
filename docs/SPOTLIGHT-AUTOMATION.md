@@ -98,3 +98,25 @@ add/remove with spaces, one of two duplicate basenames, Unicode, parent coverage
 blocked child removal, and a final list equal to the initial one. The test build reads the
 list through `sudo -n` in the VM, and the scanner's own reader is covered by its fixtures;
 the end-to-end scanner registration path is not yet exercised in the VM.
+
+## How System Settings is presented during a change (2026-10-01)
+
+A change still has to go through System Settings → Search Privacy; the question was how
+much of it the user has to see. Measured in the test VM (macOS 15.7.7) with
+`--background-probe`, which samples every 30 ms whether System Settings is the active app
+and whether its window is on screen:
+
+| Approach | Remove | Add | Why |
+|---|---|---|---|
+| Open hidden, never activate | Fails | Fails | A hidden app does not present the Search Privacy sheet |
+| Open without activating, never activate | Works, no focus change | Fails | Keys sent to the Settings process never reach the folder chooser (it runs in a separate service) |
+| Accessibility-only navigation in the chooser (no keys) | – | Works only for visible folders in column view | Hidden folders (`~/.cargo`, `~/Library`…) are not listed; `AXOpen` is refused, and only column view drills in on selection |
+| Move the window off the display | – | – | macOS clamps it (a corner stays visible) and puts it back when the sheet opens |
+| **Open without activating; activate only for Go to Folder** (`brief`, the default) | Works, no focus change, window on screen about 1 s | Works, System Settings active about 3 s, window on screen about 8 s | The only mode that works for every folder |
+
+So changes cannot be invisible. With `brief`, removing never takes focus; adding makes
+System Settings the active app for about three seconds (Go to Folder needs real
+keystrokes), then focus returns to Disk Monitor and the popover reopens. Afterwards System
+Settings is left as it was: quit if the change launched it, otherwise still running (on the
+Spotlight pane) and hidden again if it was hidden. `foreground` (activate for the whole
+change) remains available to the test runner with `--presentation foreground`.

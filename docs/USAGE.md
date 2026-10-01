@@ -264,9 +264,11 @@ hidden from Spotlight search; Disk Monitor keeps measuring it.
 
 The list comes from the Spotlight scanner, so "Spotlight index" must be checked under
 Caches & tools. Reading needs no other permission. Changing a folder needs Accessibility
-(**Allow…** appears once): Disk Monitor opens System Settings → Search Privacy, applies the
-change, confirms it with the scanner, and reopens Settings. Keep your hands off for those
-few seconds. **Remove** on an added folder includes it in Spotlight again and drops it from
+(**Allow…** appears once): Disk Monitor opens System Settings → Search Privacy behind your
+windows, applies the change, confirms it with the scanner, and quits System Settings again
+if it had to launch it. Unchecking takes about a second and never takes focus. Checking or
+adding a folder makes System Settings the active app for about three seconds, because
+choosing the folder needs real keystrokes; keep your hands off until Settings reopens. **Remove** on an added folder includes it in Spotlight again and drops it from
 the list. A folder excluded through a parent folder can't be unchecked on its own, and a
 removal is refused when two excluded folders share a name; change those in System
 Settings. "Unknown" means the state could not be read, not that a folder is included.
