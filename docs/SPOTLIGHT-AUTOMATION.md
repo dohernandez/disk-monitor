@@ -114,9 +114,17 @@ and whether its window is on screen:
 | Move the window off the display | – | – | macOS clamps it (a corner stays visible) and puts it back when the sheet opens |
 | **Open without activating; activate only for Go to Folder** (`brief`, the default) | Works, no focus change, window on screen about 1 s | Works, System Settings active about 3 s, window on screen about 8 s | The only mode that works for every folder |
 
-So changes cannot be invisible. With `brief`, removing never takes focus; adding makes
-System Settings the active app for about three seconds (Go to Folder needs real
-keystrokes), then focus returns to Disk Monitor and the popover reopens. Afterwards System
+So changes cannot be invisible. Removing never takes focus. **Adding runs in the
+foreground**: with `brief`, the Go to Folder keystrokes were lost in 3 of 5 VM runs of the
+released v1.12.0 (2026-10-01), leaving the dialog open, while keeping System Settings active
+for the whole add passed 5 of 5. After an add the popover reopens.
+
+Hidden folders such as `~/.cargo` are not listed by the chooser, so they cannot be selected
+in their parent. For those the app goes into the folder itself and chooses it as the
+chooser's current folder; the exact list read afterwards is the proof, and any other path
+macOS added is removed again. A lost Return is retried only while the Go to Folder box is
+provably still open, because Return otherwise triggers Choose. After a failed change the
+exact list is read again, so the checkboxes keep showing the real state. Afterwards System
 Settings is left as it was: quit if the change launched it, otherwise still running (on the
 Spotlight pane) and hidden again if it was hidden. `foreground` (activate for the whole
 change) remains available to the test runner with `--presentation foreground`.

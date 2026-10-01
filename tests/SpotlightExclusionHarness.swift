@@ -10,7 +10,7 @@ import SwiftUI
 // scanner registration, scans or timers. Mutations are limited to disposable fixtures.
 enum SpotlightExclusionHarness {
     static let flag = "--spotlight-exclusion-test"
-    static let fixtures = ["duplicate-a/Cache", "duplicate-b/Cache", "folder with spaces", "Ünïcødé 文件夹", "excluded-parent", "excluded-parent/child"]
+    static let fixtures = ["duplicate-a/Cache", "duplicate-b/Cache", "folder with spaces", "Ünïcødé 文件夹", "excluded-parent", "excluded-parent/child", ".hidden-cache"]
     static func requested(_ arguments: [String]) -> Bool { arguments.contains(flag) }
     static var defaultRoot: URL { FileManager.default.temporaryDirectory.appendingPathComponent("DiskMonitor-exclusion-fixtures") }
     struct Environment {
@@ -370,6 +370,9 @@ enum SpotlightExclusionHarness {
         step("child already covered: no change", child, excluded: true) { $0.paths == beforeChild }
         step("remove child blocked by parent", child, excluded: false, blocked: true)
         step("remove parent", parent, excluded: false)
+        // Hidden folders (like ~/.cargo) are not listed by the chooser.
+        step("add hidden", fixture(".hidden-cache"), excluded: true)
+        step("remove hidden", fixture(".hidden-cache"), excluded: false)
         step("remove spaces", spaces, excluded: false)
         // Restore: remove only fixture entries that are still excluded, whatever failed above.
         do {

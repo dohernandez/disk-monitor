@@ -67,6 +67,10 @@ final class SpotlightPrivacyAutomation {
     // does not present the Search Privacy sheet.
     enum Presentation: String { case foreground, background, hidden, brief }
     var presentation: Presentation = .brief
+    // Adding needs keystrokes in the folder chooser. In the VM they were lost in 3 of 5 runs
+    // unless System Settings stayed the active app for the whole add, so an add runs in the
+    // foreground and is tidied up afterwards. Removing needs no keystrokes and stays in the background.
+    private var foregroundAdd = false
     private var focusedAt: Date?
     private var previous: NSRunningApplication?
     private var launched = false
@@ -106,14 +110,14 @@ final class SpotlightPrivacyAutomation {
             if let value = try find() { return value }
             Thread.sleep(forTimeInterval: 0.15)
         } while Date() < deadline
-        throw fail("Timed out waiting for \(description). Refresh to check the current exclusions.")
+        throw fail("Timed out waiting for \(description). No change was confirmed.")
     }
     private func foreground() throws {
         try check()
         // Accessibility actions do not need System Settings in front; only keystrokes do.
         if presentation != .foreground && !focused { return }
         guard let process, NSWorkspace.shared.frontmostApplication?.processIdentifier == process.processIdentifier else {
-            throw fail("System Settings lost focus. Refresh to check the current exclusions before retrying.")
+            throw fail("System Settings lost focus. No change was confirmed; try again.")
         }
     }
     private func press(_ element: AXUIElement) throws {
@@ -214,7 +218,7 @@ final class SpotlightPrivacyAutomation {
     // Leave System Settings as it was: quit it if this operation launched it, otherwise hide
     // it again if it was hidden. It stays on the Spotlight pane. No-op for the foreground mode.
     private func restore() {
-        guard presentation != .foreground, let process else { return }
+        guard presentation != .foreground || foregroundAdd, let process else { return }
         unfocus()
         if launched {
             process.terminate()
@@ -324,12 +328,18 @@ final class SpotlightPrivacyAutomation {
     }
     // Innermost first: Cancel a chooser, then Done on Search Privacy. Only while Settings is frontmost.
     func closeSheets() {
-        for _ in 0..<3 {
+        for _ in 0..<4 {
             guard let window = windows().first, let open = try? sheets(window), let innermost = open.last else {
                 cleanupNotes.append("no open dialogs"); return
             }
             let nested = (try? sheets(innermost)) ?? []
             guard nested.isEmpty else { cleanupNotes.append("unexpected nested dialog"); return }
+            let buttonsGone = !controls(of: innermost).contains { string($0, kAXIdentifierAttribute) == "CancelButton" }
+            if buttonsGone, (try? pathField(in: innermost)) ?? nil != nil {
+                // Go to Folder replaces the chooser's buttons; Escape closes it.
+                try? focus(); try? key(53); Thread.sleep(forTimeInterval: 0.6)
+                cleanupNotes.append("closed Go to Folder"); continue
+            }
             let buttons = (try? descendants(innermost).filter { string($0, kAXRoleAttribute) == kAXButtonRole }) ?? []
             func named(_ name: String) -> AXUIElement? { buttons.first { string($0, kAXTitleAttribute) == name || string($0, kAXDescriptionAttribute) == name } }
             let cancel = buttons.first { string($0, kAXIdentifierAttribute) == "CancelButton" }
@@ -379,13 +389,29 @@ final class SpotlightPrivacyAutomation {
                 throw fail("Two excluded folders are named “\(name)”. Remove this one in System Settings → Spotlight → Search Privacy.")
             }
         }
+        if excluded && presentation == .brief { presentation = .foreground; foregroundAdd = true }
         let sheet = try privacySheet()
         if excluded { try addFolder(path, in: sheet) } else { try removeRow(named: name, in: sheet) }
         // macOS saves the list asynchronously; the root read is the persisted state.
-        let after: SpotlightPrivacySnapshot = try wait("macOS to save the exclusion change", timeout: 20) {
+        let after: SpotlightPrivacySnapshot
+        do { after = try wait("macOS to save the exclusion change", timeout: 20) {
             guard try self.sheets(sheet).isEmpty else { return nil }
             let value = try exactList()
             return value.matchesChange(from: before, path: path, excluded: excluded) ? value : nil
+        } } catch {
+            // An add must leave exactly the requested path. Remove anything else it added.
+            guard excluded, let now = try? exactList(), (try? sheets(sheet).isEmpty) == true else { throw error }
+            let unexpected = now.paths.subtracting(before.paths).subtracting([path])
+            guard !unexpected.isEmpty else { throw error }
+            var kept: [String] = []
+            for extra in unexpected.sorted() {
+                let extraName = URL(fileURLWithPath: extra).lastPathComponent
+                guard now.paths.filter({ URL(fileURLWithPath: $0).lastPathComponent == extraName }).count == 1,
+                      (try? removeRow(named: extraName, in: sheet)) != nil,
+                      (try? wait("macOS to undo the change", timeout: 10) { try exactList().paths.contains(extra) ? nil : true }) != nil else { kept.append(extra); continue }
+            }
+            throw fail(kept.isEmpty ? "macOS excluded a different folder; it was included again. Nothing changed."
+                       : "macOS excluded a different folder: \(kept.joined(separator: ", ")). Remove it in System Settings → Spotlight → Search Privacy.")
         }
         try press(namedButton(sheet, names: ["Done"]))
         return after
@@ -395,6 +421,7 @@ final class SpotlightPrivacyAutomation {
         guard excluded, let requested, let path = SpotlightPrivacySnapshot.path(requested) else {
             throw fail("Exact exclusions need Spotlight measurement turned on. Folders can still be added.")
         }
+        if presentation == .brief { presentation = .foreground; foregroundAdd = true }
         let sheet = try privacySheet()
         let beforeNames = try rows(sheet).map { try rowName($0) }
         guard !beforeNames.contains(nil) else { throw fail("macOS did not show the exclusion list. No changes were made.") }
@@ -431,7 +458,12 @@ final class SpotlightPrivacyAutomation {
         }
         // Go to the parent, then select the exact folder row. Choosing the chooser's
         // current directory is never accepted as proof of selection.
-        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        let target = URL(fileURLWithPath: path)
+        // The chooser does not list hidden folders (e.g. ~/.cargo), so they cannot be selected in
+        // their parent. Go into the folder itself and choose it as the chooser's current folder;
+        // the exact list read afterwards is the proof, and anything else added is removed again.
+        let hidden = target.lastPathComponent.hasPrefix(".") || ((try? target.resourceValues(forKeys: [.isHiddenKey]).isHidden) ?? false)
+        let parent = hidden ? path : target.deletingLastPathComponent().path
         var walked = false
         #if DISK_MONITOR_TESTS
         if walksChooser { try walk(to: path, in: picker); walked = true }
@@ -447,6 +479,7 @@ final class SpotlightPrivacyAutomation {
                     if [kAXTextFieldRole, kAXComboBoxRole].contains(self.string(node, kAXRoleAttribute)),
                        self.string(node, kAXSubroleAttribute) != kAXSearchFieldSubrole, self.url(node) == nil { return node }
                 }
+                if let known = try self.pathField(in: picker) { return known }
                 let fields = try self.descendants(picker).filter {
                     [kAXTextFieldRole, kAXComboBoxRole].contains(self.string($0, kAXRoleAttribute))
                         && self.string($0, kAXSubroleAttribute) != kAXSearchFieldSubrole
@@ -455,12 +488,34 @@ final class SpotlightPrivacyAutomation {
                 return fields.count == 1 ? fields[0] : nil
             } } catch { presentationNotes.append("at Go to Folder timeout: " + focusState()); throw error }
             try foreground()
+            // The box is still appearing when its field is first found; text and Return sent
+            // then are dropped. Let it settle before each.
+            Thread.sleep(forTimeInterval: 0.5)
             guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, parent as CFString) == .success,
                   string(field, kAXValueAttribute) == parent else { throw fail("Could not enter the folder path. No exclusion was added.") }
-            try key(36)
-            // The chooser navigates without needing focus; give the key time to arrive, then hand focus back.
-            Thread.sleep(forTimeInterval: 0.3)
+            // A Return keystroke can be lost. Verify the chooser left Go to Folder at the
+            // destination; if not, refocus the field and press Return again.
+            var confirmed = false
+            for attempt in 0..<3 where !confirmed {
+                if attempt > 0 {
+                    // Return goes to the chooser's Choose button once the box has closed, so
+                    // press it again only while Go to Folder is provably still open.
+                    guard try goToFolderOpen(in: picker) else { break }
+                    try? focus()
+                    AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                }
+                Thread.sleep(forTimeInterval: 0.4)
+                try key(36)
+                confirmed = (try? wait("the folder path to be accepted", timeout: 4) { try self.chooser(picker, shows: parent) ? true : nil }) != nil
+            }
+            guard confirmed else { throw fail("macOS did not accept the folder path. No exclusion was added.") }
             unfocus()
+        }
+        if hidden && !walked {
+            unfocus()
+            _ = try wait("the folder in the chooser") { try self.chooser(picker, shows: path) ? true : nil }
+            try pressChoose(in: picker)
+            return
         }
         // List view exposes rows (AXRow). Icon view (AXCollectionList, github.com/TamaT-LLC/openpath/pull/64)
         // and column view (AXBrowser columns) expose plain AXLists of groups holding the AXURL item.
@@ -497,7 +552,33 @@ final class SpotlightPrivacyAutomation {
         }
         let chosenPaths = try SpotlightPrivacySnapshot(rows: selected.map { try rowIdentity($0) }).paths
         guard chosenPaths == [path] else { throw fail("The selected folder does not match the requested path. No exclusion was added.") }
-        let byIdentifier = try descendants(picker).filter { string($0, kAXRoleAttribute) == kAXButtonRole && string($0, kAXIdentifierAttribute) == "OKButton" }
+        try pressChoose(in: picker)
+    }
+    // Go to Folder is done when the chooser's buttons are back (they are replaced while the box
+    // is open) and its location pop-up names the destination folder.
+    private func chooser(_ picker: AXUIElement, shows folder: String) throws -> Bool {
+        let nodes = controls(of: picker)
+        guard nodes.contains(where: { string($0, kAXIdentifierAttribute) == "OKButton" }) else { return false }
+        let name = URL(fileURLWithPath: folder).lastPathComponent.precomposedStringWithCanonicalMapping
+        return nodes.contains { string($0, kAXIdentifierAttribute) == "where popup" && string($0, kAXValueAttribute).precomposedStringWithCanonicalMapping == name }
+    }
+    // The chooser's own controls (Choose, Cancel, location pop-up, Go to Folder field) sit within
+    // two levels of the sheet. Scanning its whole file list on every poll takes seconds.
+    private func controls(of picker: AXUIElement) -> [AXUIElement] {
+        let first = elements(picker)
+        return first + first.flatMap { elements($0) }
+    }
+    private func goToFolderOpen(in picker: AXUIElement) throws -> Bool {
+        let nodes = controls(of: picker)
+        return nodes.contains { string($0, kAXIdentifierAttribute) == "PathTextField" }
+            && !nodes.contains { string($0, kAXIdentifierAttribute) == "OKButton" }
+    }
+    // The Go to Folder box (AXIdentifier "PathTextField") while it is open.
+    private func pathField(in root: AXUIElement) throws -> AXUIElement? {
+        controls(of: root).first { string($0, kAXIdentifierAttribute) == "PathTextField" }
+    }
+    private func pressChoose(in picker: AXUIElement) throws {
+        let byIdentifier = controls(of: picker).filter { string($0, kAXRoleAttribute) == kAXButtonRole && string($0, kAXIdentifierAttribute) == "OKButton" }
         let choose = byIdentifier.count == 1 ? byIdentifier[0] : try namedButton(picker, names: ["Choose", "Open"])
         guard (attribute(choose, kAXEnabledAttribute) as? Bool) == true else { throw fail("macOS did not enable Choose for this folder. No exclusion was added.") }
         try press(choose)
@@ -711,6 +792,13 @@ final class SpotlightExclusionControls: ObservableObject {
                     }
                 case .failure(let failure):
                     self.snapshot = nil; self.status = "Exclusion status is unknown."; self.error = failure.localizedDescription
+                    // Keep showing the real state: read the exact list again (no System Settings).
+                    if path != nil, let provider {
+                        self.queue.async {
+                            let current = try? provider()
+                            DispatchQueue.main.async { if !self.busy { self.snapshot = current } }
+                        }
+                    }
                 }
                 if case .success(let value?) = outcome, let path { done?((value.covering(path) != nil) == excluded) } else { done?(false) }
             }
