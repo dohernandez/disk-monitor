@@ -72,6 +72,14 @@ enum SpotlightSuggestions {
         guard !indexes.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         return path
     }
+    // Each volume keeps its own Spotlight exclusion list, and only the main (home) volume's
+    // list is read. A folder on another volume, such as a separate Nix Store volume, cannot be
+    // shown or changed here. Unknown volumes (missing folders) are not filtered.
+    static func sameVolume(_ path: String, as reference: String) -> Bool {
+        func volume(_ path: String) -> URL? { try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeURLKey]).volume }
+        guard let first = volume(path), let second = volume(reference) else { return true }
+        return first == second
+    }
     static func paths(_ paths: [String], indexPath: String) -> [String] {
         var seen = Set<String>()
         return paths.compactMap { normalized($0, indexPath: indexPath) }.filter { seen.insert($0).inserted }
@@ -285,6 +293,7 @@ final class Model: ObservableObject {
         return (defaultCacheOptions + customCaches).filter { root in
             var directory: ObjCBool = false
             return SpotlightSuggestions.normalized(root.path, indexPath: spotlightPath) != nil
+                && SpotlightSuggestions.sameVolume(root.path, as: home)
                 && FileManager.default.fileExists(atPath: root.path, isDirectory: &directory) && directory.boolValue
                 && seen.insert(root.path).inserted
         }
