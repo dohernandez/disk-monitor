@@ -13,7 +13,8 @@ TEST_GUARD = '#if DISK_MONITOR_TESTS'
 BANNED = ('"--self-test"', '--updater-self-test', '--diagnostics', '"--show"', 'launchDiagnostic', 'runTestMode',
           'testReminderCallbacks', 'DISK_MONITOR_TEST_MODE', 'PASS: scanner, folders', '/tmp/DiskMonitor-launch-diagnostic',
           '--spotlight-exclusion-test', '--run-scenarios', '--dump-accessibility', '--close-dialogs', 'SpotlightExclusionHarness',
-          'sudoList', 'mutationScope', 'failureTree', 'closeLeftovers', 'usesTestList')
+          'sudoList', 'mutationScope', 'failureTree', 'closeLeftovers', 'usesTestList',
+          '--background-probe', '--presentation', 'walksChooser', 'probeReach')
 # Release package verification the release job runs on the signed package it ships (no registration,
 # IPC or scan). These are the only launch arguments main.swift may read outside the test guard.
 PACKAGE_VERIFICATION = ('--scanner-package-self-test',)
