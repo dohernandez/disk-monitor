@@ -269,7 +269,9 @@ windows, applies the change, confirms it with the scanner, and quits System Sett
 if it had to launch it. Unchecking takes about a second and never takes focus. Checking or
 adding a folder brings System Settings to the front for a few seconds, because choosing
 the folder needs real keystrokes; keep your hands off until Disk Monitor's Settings
-reopens. Hidden folders such as `~/.cargo` work too. **Remove** on an added folder includes it in Spotlight again and drops it from
+reopens. Hidden folders such as `~/.cargo` work too. Folders on another volume (for example
+a separate Nix Store volume) are not offered: each volume keeps its own Spotlight list, and
+Disk Monitor reads only the main volume's. Exclude those in System Settings. **Remove** on an added folder includes it in Spotlight again and drops it from
 the list. A folder excluded through a parent folder can't be unchecked on its own, and a
 removal is refused when two excluded folders share a name; change those in System
 Settings. "Unknown" means the state could not be read, not that a folder is included.

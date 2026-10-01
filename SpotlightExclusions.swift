@@ -91,14 +91,20 @@ final class SpotlightPrivacyAutomation {
     }
     private func string(_ element: AXUIElement, _ name: String) -> String { attribute(element, name) as? String ?? "" }
     private func descendants(_ root: AXUIElement) throws -> [AXUIElement] {
-        var queue = [root], result: [AXUIElement] = []
-        let deadline = Date().addingTimeInterval(5)
-        while !queue.isEmpty {
-            try check()
-            let item = queue.removeFirst()
-            guard !result.contains(where: { CFEqual($0, item) }) else { continue }
-            guard Date() < deadline else { throw fail("Timed out reading the macOS controls.") }
-            guard result.count < 1500 else { throw fail("The macOS controls could not be identified. No further changes were made.") }
+        // Breadth-first, each element once. Elements are bucketed by hash and the queue is read by
+        // index, so a folder chooser listing thousands of items is walked in linear time.
+        var queue = [root], next = 0, result: [AXUIElement] = [], seen: [CFHashCode: [AXUIElement]] = [:]
+        let deadline = Date().addingTimeInterval(8)
+        while next < queue.count {
+            let item = queue[next]; next += 1
+            let hash = CFHash(item)
+            if seen[hash]?.contains(where: { CFEqual($0, item) }) == true { continue }
+            if result.count % 64 == 0 {
+                try check()
+                guard Date() < deadline else { throw fail("Timed out reading the macOS controls.") }
+            }
+            guard result.count < 6000 else { throw fail("The macOS controls could not be identified. No further changes were made.") }
+            seen[hash, default: []].append(item)
             result.append(item); queue += elements(item)
         }
         return result
@@ -329,9 +335,10 @@ final class SpotlightPrivacyAutomation {
     // Innermost first: Cancel a chooser, then Done on Search Privacy. Only while Settings is frontmost.
     func closeSheets() {
         for _ in 0..<4 {
-            guard let window = windows().first, let open = try? sheets(window), let innermost = open.last else {
-                cleanupNotes.append("no open dialogs"); return
-            }
+            guard let window = windows().first else { cleanupNotes.append("no open dialogs"); return }
+            let open: [AXUIElement]
+            do { open = try sheets(window) } catch { cleanupNotes.append("could not read dialogs: " + error.localizedDescription); Thread.sleep(forTimeInterval: 0.5); continue }
+            guard let innermost = open.last else { cleanupNotes.append("no open dialogs"); return }
             let nested = (try? sheets(innermost)) ?? []
             guard nested.isEmpty else { cleanupNotes.append("unexpected nested dialog"); return }
             let buttonsGone = !controls(of: innermost).contains { string($0, kAXIdentifierAttribute) == "CancelButton" }
@@ -559,8 +566,15 @@ final class SpotlightPrivacyAutomation {
     private func chooser(_ picker: AXUIElement, shows folder: String) throws -> Bool {
         let nodes = controls(of: picker)
         guard nodes.contains(where: { string($0, kAXIdentifierAttribute) == "OKButton" }) else { return false }
-        let name = URL(fileURLWithPath: folder).lastPathComponent.precomposedStringWithCanonicalMapping
-        return nodes.contains { string($0, kAXIdentifierAttribute) == "where popup" && string($0, kAXValueAttribute).precomposedStringWithCanonicalMapping == name }
+        // The pop-up shows a display name: a volume root appears as the volume's name
+        // ("Macintosh HD", "Nix Store"), not as its last path component.
+        let url = URL(fileURLWithPath: folder)
+        let values = try? url.resourceValues(forKeys: [.localizedNameKey, .volumeLocalizedNameKey, .isVolumeKey])
+        var names: Set<String> = [url.lastPathComponent, FileManager.default.displayName(atPath: folder)]
+        if let localized = values?.localizedName { names.insert(localized) }
+        if values?.isVolume == true, let volume = values?.volumeLocalizedName { names.insert(volume) }
+        let accepted = Set(names.map { $0.precomposedStringWithCanonicalMapping })
+        return nodes.contains { string($0, kAXIdentifierAttribute) == "where popup" && accepted.contains(string($0, kAXValueAttribute).precomposedStringWithCanonicalMapping) }
     }
     // The chooser's own controls (Choose, Cancel, location pop-up, Go to Folder field) sit within
     // two levels of the sheet. Scanning its whole file list on every poll takes seconds.
@@ -886,6 +900,9 @@ struct SpotlightExclusionSettings: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard SpotlightSuggestions.normalized(url.path, indexPath: model.spotlightPath) != nil else {
             controls.report("The Spotlight index cannot be excluded here."); return
+        }
+        guard SpotlightSuggestions.sameVolume(url.path, as: model.home) else {
+            controls.report("That folder is on another volume, which keeps its own Spotlight list. Exclude it in System Settings → Spotlight → Search Privacy."); return
         }
         model.addSpotlightSuggestions([url]); controls.set(url.path, excluded: true)
     }

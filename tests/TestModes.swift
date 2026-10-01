@@ -50,6 +50,10 @@ func runTestMode() throws -> Bool {
     if CommandLine.arguments.contains("--self-test") {
         print(testModeMarker)
         try SpotlightExclusionControls.selfTest()
+        precondition(SpotlightSuggestions.sameVolume("/", as: "/") && SpotlightSuggestions.sameVolume("/missing-volume-fixture/x", as: "/"), "Unknown volumes are not filtered")
+        if FileManager.default.fileExists(atPath: "/System/Volumes/Preboot") {
+            precondition(!SpotlightSuggestions.sameVolume("/System/Volumes/Preboot", as: "/"), "A folder on another volume is not offered")
+        }
         try SpotlightExclusionHarness.selfTest()
         let scanWarning=DiskAlert(id:"scan:test",critical:false,title:"Scan",detail:"Denied",path:nil,measurementIssue:true)
         let spaceWarning=diskSpaceAlert(free:150*gib,capacity:1000*gib)!
