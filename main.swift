@@ -529,7 +529,8 @@ final class Model: ObservableObject {
         let projectPaths = projects.map(\.path)
         let library = home + "/Library/Caches"
         var candidates = Set(snapshot.keys.filter {
-            let parent = URL(fileURLWithPath: $0).deletingLastPathComponent().path
+            // String-only: URL(fileURLWithPath:) probes the filesystem for every saved reading.
+            let parent = ($0 as NSString).deletingLastPathComponent
             let candidate = $0
             return projectPaths.contains { (parent == $0 && candidate != $0 + "/worktree") || parent == $0 + "/worktree" } || parent == library
         })
@@ -546,7 +547,7 @@ final class Model: ObservableObject {
             if selected.count == largestCount { break }
         }
         return selected.map { path in
-            let title = cacheRoots.first(where: { $0.path == path })?.title ?? URL(fileURLWithPath: path).lastPathComponent
+            let title = cacheRoots.first(where: { $0.path == path })?.title ?? (path as NSString).lastPathComponent
             return Root(path: path, title: title)
         }
     }
